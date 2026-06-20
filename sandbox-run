@@ -1,0 +1,555 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Script Name: sandbox-run
+# Description: Modular data-driven bwrap sandbox execution ENGINE.
+#              The module/profile *registry* lives in a separate, sourced
+#              configuration file (see "PROFILE REGISTRY" below). This file is
+#              the generic engine: it composes the registered modules into a
+#              single bwrap invocation and launches it.
+# ==============================================================================
+
+# Strict error handling
+set -euo pipefail
+
+# ==============================================================================
+# HELPERS
+# ==============================================================================
+
+# Join the given arguments into a regex-alternation pattern (a|b|c).
+join_pattern() {
+  local IFS='|'
+  echo "$*"
+}
+
+# Return success if $1 matches the alternation $2 (optionally with a "-suffix").
+# A blank pattern never matches.
+matches_pattern() {
+  local value="$1" pattern="$2"
+  [ -n "$pattern" ] && [[ "$value" =~ ^($pattern)(-.+)?$ ]]
+}
+
+# Forward host environment variable $1 into the (cleared) sandbox via --setenv,
+# but only when it is set and non-empty. Appends to the FINAL_BWRAP_ARGS array.
+add_setenv() {
+  local name="$1" value="${!1:-}"
+  if [ -n "$value" ]; then
+    FINAL_BWRAP_ARGS+=(--setenv "$name" "$value")
+  fi
+}
+
+# Module registration, called by the sourced configuration file. Stores module
+# metadata and dynamically generates a dedicated <MODULE>_BWRAP_ARGS array
+# (bypassing Bash's lack of nested arrays).
+register_module() {
+  local mod_name="$1"   # module ("profile") name
+  local color_code="$2" # color of the command line identifier (PS1)
+  local env_script="$3" # runtime shell snippet fused into EXEC_CMD
+  shift 3               # the rest are this module's bwrap arguments
+
+  MODULE_COLOR["$mod_name"]="$color_code"
+  MODULE_ENV_SCRIPT["$mod_name"]="$env_script"
+
+  local array_name="${mod_name^^}_BWRAP_ARGS"
+  eval "$array_name=(\"\$@\")"
+}
+
+# Print (one per line) the DESTINATION paths actually populated FROM THE HOST by a
+# bwrap argument vector ("$@"): bind/dev-bind (and -try whose source EXISTS),
+# symlink targets, plus /dev and /proc. Excludes every --tmpfs (incl. "/"), since
+# the root tmpfs is precisely WHY unbound paths fail. Used by the optional
+# discovery engine to filter out failures under already-provided paths (Decision
+# #5). Implemented with `if` (not `&&`) so a non-existent -try source does not
+# trip `set -e`.
+extract_bound_paths() {
+  local args=("$@") n=$# i=0 flag src dst
+  while [ "$i" -lt "$n" ]; do
+    flag="${args[$i]}"
+    case "$flag" in
+      --bind|--ro-bind|--dev-bind)
+        printf '%s\n' "${args[$((i+2))]:-}"; i=$((i+3)) ;;
+      --bind-try|--ro-bind-try|--dev-bind-try)
+        src="${args[$((i+1))]:-}"; dst="${args[$((i+2))]:-}"
+        if [ -e "$src" ]; then printf '%s\n' "$dst"; fi
+        i=$((i+3)) ;;
+      --symlink)
+        printf '%s\n' "${args[$((i+2))]:-}"; i=$((i+3)) ;;
+      --dev|--proc)
+        printf '%s\n' "${args[$((i+1))]:-}"; i=$((i+2)) ;;
+      --tmpfs)
+        i=$((i+2)) ;;                                   # EXCLUDE tmpfs
+      --setenv|--file|--bind-data|--ro-bind-data)
+        i=$((i+3)) ;;                                   # 2-operand, irrelevant
+      --hostname|--remount-ro|--chdir|--uid|--gid)
+        i=$((i+2)) ;;                                   # 1-operand, irrelevant
+      *)
+        i=$((i+1)) ;;                                   # 0-operand / unknown
+    esac
+  done
+  printf '%s\n' "/dev" "/proc"
+}
+
+print_usage() {
+  cat <<'EOF'
+Usage: sandbox-run [options] <binary> [args...]
+
+Runs <binary> inside a bubblewrap sandbox using the profile registered for it.
+Options are recognized only BEFORE <binary>; everything after <binary> is passed
+verbatim to it (so `sandbox-run devin --help` shows devin's help).
+
+Options:
+  -h, --help     Show this help and exit
+  -l, --list     List registered binaries and their modules
+      --status   Show the resolved sandbox config for <binary> (does not run it)
+      --discover Run <binary> under strace to discover missing path permissions
+                 (requires strace; needs sandbox-discovery.sh)
+  -p, --prompt   Offer to create missing optional (-try) bind directories
+                 (also enabled via SANDBOX_PROMPT=true)
+
+Configuration:
+  The module/profile registry is sourced from the first existing of:
+    1. $SANDBOX_RUN_CONFIG
+    2. sandbox-profiles.sh next to this script
+    3. ${XDG_CONFIG_HOME:-~/.config}/sandbox-run/profiles.sh
+EOF
+}
+
+# ==============================================================================
+# LEADING-TOKEN ARGUMENT PARSING
+# ==============================================================================
+# Sandbox control flags are recognized ONLY in leading position. The first
+# non-flag token is the target binary; everything AFTER it is passed verbatim to
+# the sandboxed app (so e.g. `sandbox-run devin --help` reaches devin, not us).
+MODE="run"                        # run | list | status | discover
+PROMPT="${SANDBOX_PROMPT:-false}" # offer to create missing -try bind dirs
+
+set_primary_mode() {
+  # Primary modes (status/discover) are mutually exclusive.
+  if [ "$MODE" != "run" ] && [ "$MODE" != "$1" ]; then
+    echo "Error: --$MODE and --$1 are mutually exclusive." >&2
+    exit 1
+  fi
+  MODE="$1"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)   print_usage; exit 0 ;;
+    -l|--list)   MODE="list"; shift; break ;;
+    --status)    set_primary_mode status;   shift ;;
+    --discover)  set_primary_mode discover; shift ;;
+    -p|--prompt) PROMPT="true"; shift ;;
+    --)          shift; break ;;
+    -*)          echo "Error: unknown option '$1'." >&2; print_usage >&2; exit 1 ;;
+    *)           break ;;  # first non-flag token: the target binary
+  esac
+done
+
+# Silence host-side runtime banners in (read-only) status mode.
+notify() { [ "$MODE" = "status" ] || echo -e "$@"; }
+
+HERE="$(realpath "$PWD")"
+TARGET_BIN=""
+[ "$#" -gt 0 ] && TARGET_BIN="$(basename -- "$1")"
+
+# A target binary is required for every mode except --list.
+if [ "$MODE" != "list" ] && [ -z "$TARGET_BIN" ]; then
+  print_usage >&2
+  exit 1
+fi
+
+# The sandbox engine is only needed when we actually launch (run/discover).
+if { [ "$MODE" = "run" ] || [ "$MODE" = "discover" ]; } \
+   && ! command -v bwrap >/dev/null 2>&1; then
+  echo "Error: 'bwrap' (bubblewrap) is not installed or not on PATH." >&2
+  exit 1
+fi
+
+# Color command prefixes. Defined BEFORE sourcing the config because module
+# env scripts may embed color escapes at registration time.
+OUTPUT_COLOR="tput setaf "
+RESET_COLOR="tput sgr0"
+
+# ==============================================================================
+# GLOBAL CONFIGURATION REGISTRY (engine defaults)
+# ==============================================================================
+
+# **
+# Core system flags common to absolutely EVERY sandbox profile
+CORE_ARGS=(
+  --unshare-all
+  --unshare-user
+  --disable-userns
+  --hostname "sandbox-$TARGET_BIN"
+  --die-with-parent
+  --new-session
+
+  # Start from an EMPTY environment and re-introduce only an explicit allowlist
+  # (see CORE_SETENV / MODULE_SETENV below). This prevents host secrets such as
+  # API tokens from leaking into the sandbox. --clearenv MUST precede any
+  # --setenv, which we append after module composition.
+  --clearenv
+
+  # Crucial Order: First mount base root tmpfs, then attach /dev and other binds
+  --tmpfs "/"
+  --dev "/dev"
+  --proc "/proc"
+  --tmpfs "/tmp"
+  --tmpfs "/run"
+
+  # Core system files: bind the whole /usr read-only, then recreate the
+  # top-level merged-/usr compatibility symlinks (/bin, /sbin, /lib, /lib64).
+  # On this distro those are symlinks into /usr, so a single bind + symlinks is
+  # cleaner and more robust than enumerating /usr/{bin,lib,...} individually.
+  --ro-bind "/usr" "/usr"
+  --symlink "usr/bin" "/bin"
+  --symlink "usr/sbin" "/sbin"
+  --symlink "usr/lib" "/lib"
+  --symlink "usr/lib64" "/lib64"
+  --ro-bind "/etc/alternatives" "/etc/alternatives"
+  --ro-bind-try "/etc/fonts" "/etc/fonts"
+
+  --tmpfs "/var/cache/fontconfig"
+  --ro-bind "$HOME/.cache/fontconfig" "$HOME/.cache/fontconfig"
+  --ro-bind-try "/etc/ld.so.conf.d" "/etc/ld.so.conf.d"
+  --ro-bind-try "/etc/ld.so.cache" "/etc/ld.so.cache"
+  --ro-bind-try "/etc/ld.so.conf" "/etc/ld.so.conf"
+
+
+  # Core ~/.config files
+  --ro-bind-try "$HOME/.config/fontconfig" "$HOME/.config/fontconfig"
+  --ro-bind-try "$HOME/.config/kdedefaults" "$HOME/.config/kdedefaults"
+  --ro-bind-try "$HOME/.config/kdeglobals" "$HOME/.config/kdeglobals"
+  --ro-bind-try "$HOME/.config/user-dirs.dirs" "$HOME/.config/user-dirs.dirs"
+
+  # System shell initialization
+  --ro-bind "/etc/profile" "/etc/profile"
+  --ro-bind "/etc/profile.d" "/etc/profile.d"
+)
+
+# Display capabilities for plotting/Graphical UIs (e.g., Matplotlib, Cypress).
+# Only bind the Wayland socket when it is actually present in the environment.
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    CORE_ARGS+=(--ro-bind-try "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY")
+  fi
+
+  CORE_ARGS+=(
+    --ro-bind-try "$XDG_RUNTIME_DIR/pulse" "$XDG_RUNTIME_DIR/pulse"
+    --ro-bind-try "$XDG_RUNTIME_DIR/pipewire-0" "$XDG_RUNTIME_DIR/pipewire-0"
+    --ro-bind-try "$XDG_RUNTIME_DIR/pulse/native" "$XDG_RUNTIME_DIR/pulse/native"
+    --ro-bind-try "$HOME/.config/pulse/cookie" "$HOME/.config/pulse/cookie"
+  )
+fi
+
+# ** Base environment allowlist re-introduced into the cleared sandbox env.
+# ** Each name is forwarded with --setenv ONLY if it is set and non-empty.
+# ** Keep this minimal; secrets must never be added here.
+CORE_SETENV=(
+  HOME PATH USER LOGNAME
+  TERM COLORTERM
+  LANG LANGUAGE LC_ALL LC_CTYPE
+  # Session/display vars (harmless for CLI tools, required for graphical ones)
+  XDG_RUNTIME_DIR XDG_SESSION_TYPE WAYLAND_DISPLAY DISPLAY
+)
+
+# Registry tables populated by the sourced configuration file.
+declare -A MODULE_COLOR       # module -> prompt color code
+declare -A MODULE_ENV_SCRIPT  # module -> runtime shell snippet
+declare -A MODULE_SETENV      # module -> extra env var names to pass through
+declare -A MODULE_EXTENDS     # module -> space-separated base modules it inherits
+declare -A PROFILE_DEPS       # binary -> space-separated module list
+declare -A PROFILE_ROOT_MOD   # binary -> identity module (prompt color)
+
+# ==============================================================================
+# PROFILE REGISTRY (sourced configuration)
+# ==============================================================================
+# Keep the engine generic: the actual modules/profiles live in a config file.
+# Discovery order (first existing file wins):
+#   1. $SANDBOX_RUN_CONFIG (explicit override)
+#   2. sandbox-profiles.sh next to this script
+#   3. ${XDG_CONFIG_HOME:-~/.config}/sandbox-run/profiles.sh
+SCRIPT_DIR="$(cd -- "$(dirname -- "$(realpath -- "$0")")" && pwd)"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}/sandbox-run/profiles.sh"
+CONFIG_CANDIDATES=(
+  "${SANDBOX_RUN_CONFIG:-}"
+  "$SCRIPT_DIR/sandbox-profiles.sh"
+  "$CONFIG_HOME"
+)
+
+SANDBOX_CONFIG=""
+for cand in "${CONFIG_CANDIDATES[@]}"; do
+  if [ -n "$cand" ] && [ -f "$cand" ]; then
+    SANDBOX_CONFIG="$cand"
+    break
+  fi
+done
+
+if [ -z "$SANDBOX_CONFIG" ]; then
+  echo "Error: no sandbox profile configuration found. Looked for:" >&2
+  printf '  - %s\n' "$SCRIPT_DIR/sandbox-profiles.sh" "$CONFIG_HOME" >&2
+  echo "Set SANDBOX_RUN_CONFIG=<file> to override." >&2
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$SANDBOX_CONFIG"
+
+# Shared state directory (XDG_STATE) used by optional features such as permission
+# discovery. Created on demand by the feature that needs it.
+SANDBOX_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/sandbox-run"
+
+# ==============================================================================
+# LISTING (depends on the registry; independent of cwd)
+# ==============================================================================
+if [ "$MODE" = "list" ]; then
+  echo "Registered sandbox binaries:"
+  for bin in $(printf '%s\n' "${!PROFILE_DEPS[@]}" | sort); do
+    printf '  %-14s -> %s\n' "$bin" "${PROFILE_DEPS[$bin]}"
+  done
+  exit 0
+fi
+
+# ==============================================================================
+# RUN IN HOME POLICY (Whitelist Engine)
+# ==============================================================================
+# If app is not in RUN_HOME_WHITELIST, avoid running directly inside the host's
+# $HOME directory for safety.
+HOME_PATTERN="$(join_pattern "${RUN_HOME_WHITELIST[@]}")"
+
+# Only ENFORCE the no-$HOME policy when we actually launch (run/discover).
+# In status mode we merely REPORT the outcome (see workspace bind below), so the
+# config can be inspected from anywhere, including $HOME.
+if [ -n "$HOME_PATTERN" ] && ! matches_pattern "$TARGET_BIN" "$HOME_PATTERN" && [ "$HERE" = "$HOME" ]; then
+  if [ "$MODE" = "run" ] || [ "$MODE" = "discover" ]; then
+    echo "Error: Cannot run from $HOME... Change to a project-specific directory and rerun." >&2
+    exit 1
+  fi
+fi
+
+# Validate that the requested binary has a routing mapping profile
+if [ -z "${PROFILE_DEPS[$TARGET_BIN]:-}" ]; then
+  echo "Error: The binary '$TARGET_BIN' is not registered in any sandbox profile." >&2
+  echo "       Run 'sandbox-run --list' to see registered binaries." >&2
+  exit 1
+fi
+
+# ==============================================================================
+# DYNAMIC COMPOSITION ENGINE
+# ==============================================================================
+FINAL_BWRAP_ARGS=("${CORE_ARGS[@]}")
+FUSED_ENV_SCRIPTS=""
+FUSED_SETENV_VARS=""
+RESOLVED_COLOR=""
+
+# Fetch dependency string list (e.g. "conda node pi_agent")
+DEPS_LIST=${PROFILE_DEPS[$TARGET_BIN]}
+
+# --- Profile inheritance: flatten DEPS_LIST into EFFECTIVE_DEPS -----------------
+# Each module may declare base modules via MODULE_EXTENDS["mod"]="base...".
+# We expand depth-first, BASE-FIRST, deduping repeats and guarding cycles, in the
+# declared order of DEPS_LIST. The existing composition loop then consumes
+# EFFECTIVE_DEPS unchanged, so bwrap args, env-scripts and setenv all inherit.
+_flatten_module() {
+  local mod="$1" base
+  [ -n "${_SEEN_MOD[$mod]:-}" ] && return 0   # already included / cycle guard
+  _SEEN_MOD[$mod]=1
+  for base in ${MODULE_EXTENDS[$mod]:-}; do
+    _flatten_module "$base"
+  done
+  EFFECTIVE_DEPS+="$mod "
+}
+EFFECTIVE_DEPS=""
+declare -A _SEEN_MOD=()
+for MOD in $DEPS_LIST; do
+  _flatten_module "$MOD"
+done
+EFFECTIVE_DEPS="${EFFECTIVE_DEPS% }"   # trim trailing space
+
+# Warn (don't fail) if the binary can't be found on PATH; it may still resolve
+# inside the sandbox, but this catches typos and missing installs early. Show the
+# effective modules + config file so the user knows where to add a bind.
+if ! command -v "$1" >/dev/null 2>&1; then
+  echo "Warning: '$1' was not found on PATH; execution may fail." >&2
+  echo "         Effective modules: $EFFECTIVE_DEPS" >&2
+  echo "         Config file:       $SANDBOX_CONFIG" >&2
+fi
+
+for MOD in $EFFECTIVE_DEPS; do
+  # 1. Core runtime array binding aggregation
+  ARRAY_REF="${MOD^^}_BWRAP_ARGS"
+  declare -n CURRENT_BWRAP_ARRAY="$ARRAY_REF"
+  FINAL_BWRAP_ARGS+=("${CURRENT_BWRAP_ARRAY[@]}")
+  # Drop the nameref each iteration so the next `declare -n` rebinds cleanly
+  # instead of writing through to the previously-referenced array.
+  unset -n CURRENT_BWRAP_ARRAY
+
+  # 2. Sequential environmental script stacking
+  FUSED_ENV_SCRIPTS+="${MODULE_ENV_SCRIPT[$MOD]}"$'\n'
+
+  # 3. Collect this module's environment passthrough variable names
+  FUSED_SETENV_VARS+=" ${MODULE_SETENV[$MOD]:-}"
+done
+
+# Re-introduce the allowlisted environment into the cleared sandbox env.
+# Base allowlist first, then any per-module passthrough variables.
+for ENV_VAR in "${CORE_SETENV[@]}" $FUSED_SETENV_VARS; do
+  add_setenv "$ENV_VAR"
+done
+
+# Set the visual sandbox identity color based on the root module.
+# Use the explicit PROFILE_ROOT_MOD override if present, otherwise default to
+# the FIRST module declared in the binary's dependency list.
+ROOT_MOD_ID="${PROFILE_ROOT_MOD[$TARGET_BIN]:-${DEPS_LIST%% *}}"
+RESOLVED_COLOR="${MODULE_COLOR[$ROOT_MOD_ID]}"
+
+# ==============================================================================
+# BLACKLISTS AND WHITELISTS
+# ==============================================================================
+
+# NETWORK POLICY (Blacklist Engine)
+# If the app is in the NET_BLACKLIST, we strip or bypass the --share-net flag and related
+NET_PATTERN="$(join_pattern "${NET_BLACKLIST[@]}")"
+
+# If the binary matches the blacklisted apps/derivatives
+if matches_pattern "$TARGET_BIN" "$NET_PATTERN"; then
+  NET_DECISION="disabled"
+  notify "\n$($OUTPUT_COLOR 1)[Security Policy]$($RESET_COLOR) Network Access DISABLED for: $($OUTPUT_COLOR $RESOLVED_COLOR)$TARGET_BIN$($RESET_COLOR)"
+else
+  NET_DECISION="enabled"
+  # Include dns resolve and cert folders
+  # !! BE AWARE that this is probably not good for production because it doesn't exclude private certs)
+  # also this was tested on RHEL like OS (e.g. Fedora)
+  FINAL_BWRAP_ARGS+=(
+    --share-net
+    --ro-bind-try "/etc/resolv.conf" "/etc/resolv.conf"
+    --ro-bind-try "/etc/ssl" "/etc/ssl"
+    --ro-bind-try "/etc/pki" "/etc/pki"
+    --ro-bind-try "/etc/ca-certificates" "/etc/ca-certificates"
+  )
+fi
+
+SANDBOX_PATH=$HERE
+COLOR_PATH=119
+
+# ** WORKSPACE BIND POLICY ($HERE Directory injection)
+# ** We safely evaluate if $HERE should be mounted if it is equal to $HOME.
+# ** For now it only disallows $HERE to tools that can run in $HOME according to RUN_HOME_WHITELIST.
+if [ "$HERE" != "$HOME" ] && [ -n "$HOME_PATTERN" ] && ! matches_pattern "$TARGET_BIN" "$HOME_PATTERN"; then
+  FINAL_BWRAP_ARGS+=(--bind "$HERE" "$HERE")
+  HERE_DECISION="mounted"
+else
+  notify "\n$($OUTPUT_COLOR 1)[Security Policy]$($RESET_COLOR) \$HERE NOT MOUNTED for: $($OUTPUT_COLOR $RESOLVED_COLOR)$TARGET_BIN$($RESET_COLOR)"
+  SANDBOX_PATH="NONE"
+  COLOR_PATH=1
+  HERE_DECISION="not mounted"
+fi
+
+# ==============================================================================
+# UNIFIED INTERACTIVE COMMAND GENERATION (EXEC_CMD)
+# ==============================================================================
+# Dynamically writes the complete shell loader block.
+# Manages path activation and ensures an aesthetic, isolated PS1 prompt.
+# ==============================================================================
+
+# ** EXEC_CMD setup. Configures the script to run according to the modules
+# ** loaded, setups the sandbox (modifying the PS1 variable) and configures
+# ** if the sandbox should persist or not after TARGET_BIN ends its execution.
+
+EXEC_CMD="
+  # Always set a different PS1 env in case somehow we enter in a bash shell
+  export PS1=\"$($OUTPUT_COLOR $RESOLVED_COLOR)[sandbox] \w\\\\$ $($RESET_COLOR)\"
+
+  # Execute dynamically fused environmental profiles
+  $FUSED_ENV_SCRIPTS
+
+  # If an external or default Conda environment is specified, load it natively
+  if [ -n \"\${CONDA_ENV:-}\" ] && [ -f /etc/profile.d/conda.sh ]; then
+    source /etc/profile.d/conda.sh
+    conda activate \"\$CONDA_ENV\"
+    echo \"$($OUTPUT_COLOR $RESOLVED_COLOR)[Sandbox]$($RESET_COLOR) Attached to $($OUTPUT_COLOR ${MODULE_COLOR[conda]:-2})Conda$($RESET_COLOR) environment: \$CONDA_DEFAULT_ENV\"
+  fi
+
+  # exec anything other than conda
+  if [ \"\$0\" != \"conda\" ]; then
+    # Standard direct binary execution mechanism (Node ecosystem and automated AI agents)
+    exec \"\$@\"
+  fi
+"
+
+# ==============================================================================
+# STATUS MODE (report, do not run) — branches BEFORE any execution
+# ==============================================================================
+if [ "$MODE" = "status" ]; then
+  echo "Sandbox status for: $TARGET_BIN"
+  echo "  Config file:        $SANDBOX_CONFIG"
+  echo "  Declared modules:   $DEPS_LIST"
+  echo "  Effective modules:  $EFFECTIVE_DEPS"
+  echo "  Root (identity):    $ROOT_MOD_ID (color $RESOLVED_COLOR)"
+  echo "  Network access:     $NET_DECISION"
+  echo "  Workspace (\$HERE):  $HERE_DECISION ($HERE)"
+  echo "  bwrap arg count:    ${#FINAL_BWRAP_ARGS[@]}"
+  exit 0
+fi
+
+# ==============================================================================
+# OPTIONAL: offer to create missing -try bind directories (opt-in)
+# ==============================================================================
+# Only ever creates DIRECTORIES, default is to SKIP. Never touches file binds.
+if [ "$PROMPT" = "true" ]; then
+  for ((_i = 0; _i < ${#FINAL_BWRAP_ARGS[@]}; _i++)); do
+    case "${FINAL_BWRAP_ARGS[$_i]}" in
+      --bind-try|--ro-bind-try|--dev-bind-try)
+        _src="${FINAL_BWRAP_ARGS[$((_i + 1))]}"
+        if [ ! -e "$_src" ]; then
+          printf "Missing bind source: %s\n  [c]reate as directory / [s]kip (default skip)? " "$_src" >&2
+          read -r _ans || _ans=""
+          if [ "$_ans" = "c" ] || [ "$_ans" = "C" ]; then
+            if mkdir -p -- "$_src"; then
+              echo "  created directory: $_src" >&2
+            else
+              echo "  failed to create: $_src" >&2
+            fi
+          fi
+        fi
+        ;;
+    esac
+  done
+fi
+
+# ==============================================================================
+# RUNTIME INVOCATION ENGINE
+# ==============================================================================
+BRIGHT_YELLOW=226
+BRIGHT_WHITE=231
+
+echo "$($OUTPUT_COLOR $BRIGHT_YELLOW)======================================================"
+echo "$($OUTPUT_COLOR $BRIGHT_WHITE) Entering Sandboxed Container Engine"
+echo " Host Path:  $($OUTPUT_COLOR $COLOR_PATH)$SANDBOX_PATH$($RESET_COLOR)"
+echo "$($OUTPUT_COLOR $BRIGHT_WHITE) Executing:  $($OUTPUT_COLOR $RESOLVED_COLOR)$TARGET_BIN$($RESET_COLOR)"
+echo "$($OUTPUT_COLOR $BRIGHT_YELLOW)======================================================$($RESET_COLOR)"
+echo -e "\n"
+
+# The argument vector that follows `bwrap` for BOTH a normal run and discovery.
+SANDBOX_INVOCATION=(
+  "${FINAL_BWRAP_ARGS[@]}" --remount-ro "/" bash -c "$EXEC_CMD" "$TARGET_BIN" "$@"
+)
+
+# Discovery mode: run the EXACT same sandbox under strace to surface missing path
+# permissions. Implemented in the optional sandbox-discovery.sh, sourced only here
+# so the core engine stays free of discovery logic (Decisions #1, #2, #8).
+if [ "$MODE" = "discover" ]; then
+  DISCOVERY_LIB="$SCRIPT_DIR/sandbox-discovery.sh"
+  if [ ! -f "$DISCOVERY_LIB" ]; then
+    echo "Error: --discover requires '$DISCOVERY_LIB' (not found)." >&2
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "$DISCOVERY_LIB"
+  run_discovery "${SANDBOX_INVOCATION[@]}"
+  exit $?
+fi
+
+# Single unified execution point. Processes variables securely, applies absolute 
+# directory constraints, mounts the target paths, and handles parameters natively.
+exec bwrap "${SANDBOX_INVOCATION[@]}"
