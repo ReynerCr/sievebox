@@ -89,6 +89,31 @@ extract_bound_paths() {
   printf '%s\n' "/dev" "/proc"
 }
 
+# Print (one per line) the non-root --tmpfs DESTINATIONS in a bwrap arg vector
+# (e.g. /tmp, /run, /var/cache/fontconfig). The root tmpfs "/" is EXCLUDED on
+# purpose: every unbound path lives under "/", so including it would swallow all
+# candidates. Used by discovery's R6 "ephemeral/cache" bucket — failures under a
+# writable sandbox tmpfs are app-internal scratch that a host bind cannot fix.
+# Operand counts mirror extract_bound_paths so destinations are never misparsed.
+extract_tmpfs_paths() {
+  local args=("$@") n=$# i=0 flag dst
+  while [ "$i" -lt "$n" ]; do
+    flag="${args[$i]}"
+    case "$flag" in
+      --tmpfs)
+        dst="${args[$((i+1))]:-}"
+        if [ -n "$dst" ] && [ "$dst" != "/" ]; then printf '%s\n' "$dst"; fi
+        i=$((i+2)) ;;
+      --bind|--ro-bind|--dev-bind|--bind-try|--ro-bind-try|--dev-bind-try|--symlink|--setenv|--file|--bind-data|--ro-bind-data)
+        i=$((i+3)) ;;                                   # 2-operand
+      --dev|--proc|--hostname|--remount-ro|--chdir|--uid|--gid)
+        i=$((i+2)) ;;                                   # 1-operand
+      *)
+        i=$((i+1)) ;;                                   # 0-operand / unknown
+    esac
+  done
+}
+
 print_usage() {
   cat <<'EOF'
 Usage: sandbox-run [options] <binary> [args...]
@@ -99,10 +124,13 @@ verbatim to it (so `sandbox-run devin --help` shows devin's help).
 
 Options:
   -h, --help     Show this help and exit
-  -l, --list     List registered binaries and their modules
+  -l, --list [binary...]
+                 List modules for the given binary/binaries (inheritance-
+                 expanded). With no binary, list all registered binaries.
       --status   Show the resolved sandbox config for <binary> (does not run it)
       --discover Run <binary> under strace to discover missing path permissions
-                 (requires strace; needs sandbox-discovery.sh)
+                 (requires strace; needs sandbox-discovery.sh). Also prints an
+                 advisory project-type heads-up (disable: SANDBOX_AUTO_DETECT=false)
   -p, --prompt   Offer to create missing optional (-try) bind directories
                  (also enabled via SANDBOX_PROMPT=true)
 
@@ -208,6 +236,12 @@ CORE_ARGS=(
   --symlink "usr/lib64" "/lib64"
   --ro-bind "/etc/alternatives" "/etc/alternatives"
   --ro-bind-try "/etc/fonts" "/etc/fonts"
+  --ro-bind-try "/etc/hosts" "/etc/hosts"
+  --ro-bind-try "/etc/host.conf" "/etc/host.conf"
+  --ro-bind-try "/etc/nsswitch.conf" "/etc/nsswitch.conf"
+  --ro-bind-try "/etc/group" "/etc/group"
+  --ro-bind-try "/etc/passwd" "/etc/passwd"
+  --ro-bind-try "/etc/localtime" "/etc/localtime"
 
   --tmpfs "/var/cache/fontconfig"
   --ro-bind "$HOME/.cache/fontconfig" "$HOME/.cache/fontconfig"
@@ -215,16 +249,26 @@ CORE_ARGS=(
   --ro-bind-try "/etc/ld.so.cache" "/etc/ld.so.cache"
   --ro-bind-try "/etc/ld.so.conf" "/etc/ld.so.conf"
 
-
   # Core ~/.config files
+  --ro-bind-try "$HOME/.fonts" "$HOME/.fonts"
   --ro-bind-try "$HOME/.config/fontconfig" "$HOME/.config/fontconfig"
+  --ro-bind-try "$HOME/.config/user-dirs.dirs" "$HOME/.config/user-dirs.dirs"
+  --ro-bind-try "$HOME/.local/share/icons" "$HOME/.local/share/icons"
   --ro-bind-try "$HOME/.config/kdedefaults" "$HOME/.config/kdedefaults"
   --ro-bind-try "$HOME/.config/kdeglobals" "$HOME/.config/kdeglobals"
-  --ro-bind-try "$HOME/.config/user-dirs.dirs" "$HOME/.config/user-dirs.dirs"
+  --ro-bind-try "$HOME/.config/kwinrc" "$HOME/.config/kwinrc"
+  --ro-bind-try "$HOME/.local/share/plasma" "$HOME/.local/share/plasma"
+  --ro-bind-try "$HOME/.local/share/color-schemes/" "$HOME/.local/share/color-schemes/"
 
   # System shell initialization
   --ro-bind "/etc/profile" "/etc/profile"
   --ro-bind "/etc/profile.d" "/etc/profile.d"
+
+  # GTK files for theming
+  --ro-bind-try "$HOME/.config/gtk-3.0" "$HOME/.config/gtk-3.0"
+  --ro-bind-try "$HOME/.config/gtk-4.0" "$HOME/.config/gtk-4.0"
+  --ro-bind-try "$HOME/.config/gtkrc" "$HOME/.config/gtkrc"
+  --ro-bind-try "$HOME/.config/gtkrc-2.0" "$HOME/.config/gtkrc-2.0"
 )
 
 # Display capabilities for plotting/Graphical UIs (e.g., Matplotlib, Cypress).
@@ -299,14 +343,58 @@ source "$SANDBOX_CONFIG"
 # discovery. Created on demand by the feature that needs it.
 SANDBOX_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/sandbox-run"
 
+# --- Profile inheritance flattening (shared by --list and the run path) --------
+# Each module may declare base modules via MODULE_EXTENDS["mod"]="base...". We
+# expand depth-first, BASE-FIRST, deduping repeats and guarding cycles, in the
+# declared order. compute_effective_deps "<declared list>" sets EFFECTIVE_DEPS.
+declare -A _SEEN_MOD=()
+_flatten_module() {
+  local mod="$1" base
+  [ -n "${_SEEN_MOD[$mod]:-}" ] && return 0   # already included / cycle guard
+  _SEEN_MOD[$mod]=1
+  for base in ${MODULE_EXTENDS[$mod]:-}; do
+    _flatten_module "$base"
+  done
+  EFFECTIVE_DEPS+="$mod "
+}
+compute_effective_deps() {
+  local MOD
+  EFFECTIVE_DEPS=""
+  _SEEN_MOD=()
+  for MOD in $1; do
+    _flatten_module "$MOD"
+  done
+  EFFECTIVE_DEPS="${EFFECTIVE_DEPS% }"
+}
+
 # ==============================================================================
 # LISTING (depends on the registry; independent of cwd)
 # ==============================================================================
+# With binary argument(s): show ONLY their modules (inheritance-expanded). With
+# no binary: keep the original "show every registered binary" behaviour (7.1).
 if [ "$MODE" = "list" ]; then
-  echo "Registered sandbox binaries:"
-  for bin in $(printf '%s\n' "${!PROFILE_DEPS[@]}" | sort); do
-    printf '  %-14s -> %s\n' "$bin" "${PROFILE_DEPS[$bin]}"
-  done
+  if [ "$#" -gt 0 ]; then
+    for _arg in "$@"; do
+      _bin="$(basename -- "$_arg")"
+      if [ -z "${PROFILE_DEPS[$_bin]:-}" ]; then
+        echo "Error: '$_bin' is not registered. Run 'sandbox-run --list' for all." >&2
+        continue
+      fi
+      _d="${PROFILE_DEPS[$_bin]}"
+      compute_effective_deps "$_d"
+      _root="${PROFILE_ROOT_MOD[$_bin]:-${_d%% *}}"
+      echo "Modules for '$_bin':"
+      echo "  Declared:   $_d"
+      echo "  Effective:  $EFFECTIVE_DEPS   (inheritance-expanded)"
+      echo "  Root:       $_root"
+      echo
+    done
+  else
+    echo "Registered sandbox binaries:"
+    for bin in $(printf '%s\n' "${!PROFILE_DEPS[@]}" | sort); do
+      printf '  %-14s -> %s\n' "$bin" "${PROFILE_DEPS[$bin]}"
+    done
+  fi
   exit 0
 fi
 
@@ -346,25 +434,10 @@ RESOLVED_COLOR=""
 DEPS_LIST=${PROFILE_DEPS[$TARGET_BIN]}
 
 # --- Profile inheritance: flatten DEPS_LIST into EFFECTIVE_DEPS -----------------
-# Each module may declare base modules via MODULE_EXTENDS["mod"]="base...".
-# We expand depth-first, BASE-FIRST, deduping repeats and guarding cycles, in the
-# declared order of DEPS_LIST. The existing composition loop then consumes
-# EFFECTIVE_DEPS unchanged, so bwrap args, env-scripts and setenv all inherit.
-_flatten_module() {
-  local mod="$1" base
-  [ -n "${_SEEN_MOD[$mod]:-}" ] && return 0   # already included / cycle guard
-  _SEEN_MOD[$mod]=1
-  for base in ${MODULE_EXTENDS[$mod]:-}; do
-    _flatten_module "$base"
-  done
-  EFFECTIVE_DEPS+="$mod "
-}
-EFFECTIVE_DEPS=""
-declare -A _SEEN_MOD=()
-for MOD in $DEPS_LIST; do
-  _flatten_module "$MOD"
-done
-EFFECTIVE_DEPS="${EFFECTIVE_DEPS% }"   # trim trailing space
+# Uses the shared compute_effective_deps() defined above (base-first, deduped,
+# cycle-guarded). The composition loop then consumes EFFECTIVE_DEPS unchanged, so
+# bwrap args, env-scripts and setenv all inherit.
+compute_effective_deps "$DEPS_LIST"
 
 # Warn (don't fail) if the binary can't be found on PATH; it may still resolve
 # inside the sandbox, but this catches typos and missing installs early. Show the
