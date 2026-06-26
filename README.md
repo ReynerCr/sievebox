@@ -1,4 +1,4 @@
-# Sandbox-run
+# Sievebox
 
 A small bubblewrap (`bwrap`) wrapper that runs your tools inside a
 locked-down sandbox. It keeps a configured set of **core permissions** (fonts,
@@ -13,25 +13,25 @@ sharing one Node module), Llama.cpp, OpenCode, Pi Agent and Devin (CLI), among o
 
 There are three pieces (the engine usually finds the config next to itself):
 
-- **`sandbox-run`**: the engine. Argument parsing, the `CORE_ARGS` base
+- **`sievebox`**: the engine. Argument parsing, the `CORE_ARGS` base
   permissions, composition, and the run/list/status/discover modes. Rarely
   needs modification.
-- **`sandbox-profiles.sh`**: the configuration (data). All the modules,
+- **`sievebox-profiles.sh`**: the configuration (data). All the modules,
   per-app routing, and host policy knobs. **This is the file that needs edits to add new profiles.**
-- **`sandbox-discovery.sh`**: optional. Powers `--discover` (and the project
+- **`sievebox-discovery.sh`**: optional. Powers `--discover` (and the project
   detection that runs with it). Delete it and everything except `--discover`
   still works.
 
-The config is loaded from the first that exists: `$SANDBOX_RUN_CONFIG`, then
-`sandbox-profiles.sh` next to the script, then
-`${XDG_CONFIG_HOME:-~/.config}/sandbox-run/profiles.sh`.
+The config is loaded from the first that exists: `$SIEVEBOX_CONFIG`, then
+`sievebox-profiles.sh` next to the script, then
+`${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.sh`.
 
 ## Using it
 
 Run a registered app (e.g. `bash`) inside the sandbox:
 
 ```bash
-$ sandbox-run bash
+$ sievebox bash
 ```
 
 It prints the real path and the app being run, then executes it:
@@ -46,11 +46,11 @@ It prints the real path and the app being run, then executes it:
 # some warnings related to the --new-session argument in Bubblewrap
 
 # app execution: runs a new bash shell where you can run anything the sandbox allows
-[sandbox] /path/to/your/current/shell/session$
+[sievebox] /path/to/your/current/shell/session$
 ```
 
 Anything after the binary name is passed straight to the app, so
-`sandbox-run node --help` shows *node's* help, not the sandbox's. Flags are
+`sievebox node --help` shows *node's* help, not the sievebox's. Flags are
 only recognized **before** the binary name.
 
 ### Flags
@@ -60,7 +60,7 @@ only recognized **before** the binary name.
   inheritance, plus the declared list and the "root" (identity) module:
 
   ```bash
-  $ sandbox-run --list npm
+  $ sievebox --list npm
   Modules for 'npm':
     Declared:   node webdev gpu specific_projects
     Effective:  node dev_base webdev gpu specific_projects   (inheritance-expanded)
@@ -70,16 +70,16 @@ only recognized **before** the binary name.
 - `--status <binary>`: show the resolved config for an app (modules, network
   decision, whether `$HERE` is mounted, bwrap arg count) **without running it**.
 - `--discover <binary>`: run the app under `strace` to find missing path
-  permissions (see below). Needs `strace` and `sandbox-discovery.sh`.
+  permissions (see below). Needs `strace` and `sievebox-discovery.sh`.
 - `-p, --prompt`: when a tool's optional bind directory is missing, offer to
-  create it (also via `SANDBOX_PROMPT=true`). Default is to skip.
+  create it (also via `SIEVEBOX_PROMPT=true`). Default is to skip.
 - `-h, --help`: show the usage info.
 
 ## Overriding binaries
 
 For ease of use and a bit of extra safety (so you don't accidentally run an
 executable *outside* a sandbox), you can set up shell overrides that wrap your
-tools in `sandbox-run`, by shadowing the real binaries on your `$PATH` from your
+tools in `sievebox`, by shadowing the real binaries on your `$PATH` from your
 `~/.bashrc` (or similar).
 
 In the dev folder I keep my `~/.bashrc` extensions; specifically `10-override.sh`
@@ -93,7 +93,7 @@ Note: this isn't a catch-all. If a command is invoked through another (e.g. unde
 ## Extending the profiles and apps
 
 The easily-editable bits are commented with a `# **` prefix, grep for those.
-Almost everything lives in `sandbox-profiles.sh`.
+Almost everything lives in `sievebox-profiles.sh`.
 
 ### Add a module (a permission bundle)
 
@@ -149,7 +149,7 @@ The base allowlist (`HOME`, `PATH`, `TERM`, locale/display vars, …) lives in
 
 ### Host policy knobs
 
-Also in `sandbox-profiles.sh`:
+Also in `sievebox-profiles.sh`:
 
 - `RUN_HOME_WHITELIST`: apps allowed to start directly in `$HOME` (regex
   alternation; these also don't get `$HERE` bound). By default running from
@@ -168,12 +168,12 @@ usual X11 problems. Display support here is via the Wayland socket.
 When a sandboxed app misbehaves because it can't reach a file, trace it:
 
 ```bash
-$ sandbox-run --discover npm run build
+$ sievebox --discover npm run build
 ```
 
 This runs the *exact same* sandbox under `strace`, then classifies every path the
 app couldn't access into actionable buckets and writes everything to
-`~/.local/state/sandbox-run/discovery/<app>-<timestamp>/`:
+`~/.local/state/sievebox/discovery/<app>-<timestamp>/`:
 
 - `summary.txt`: the human-readable report (also printed at the end).
 - `failures.log`: the raw classified rows (source of truth).
@@ -198,13 +198,13 @@ Before tracing, `--discover` also prints a quick **project-detection** heads-up
 (also saved to `detect.txt`): it looks at marker files in the current directory
 (`package.json`, `Cargo.toml`, `pyproject.toml`, …) and warns if the app's
 modules seem to be missing one (e.g. you're in a conda project but the profile
-has no conda module). Disable with `SANDBOX_AUTO_DETECT=false`.
+has no conda module). Disable with `SIEVEBOX_AUTO_DETECT=false`.
 
 ### Tuning discovery
 
-All env-overridable (sensible defaults in `sandbox-discovery.sh`):
+All env-overridable (sensible defaults in `sievebox-discovery.sh`):
 
 - `DISCOVERY_ERRNOS`: which failures count (default `ENOENT EACCES EROFS`).
 - `DISCOVERY_SYS_PATHS`, `DISCOVERY_CACHE_PATTERNS`, `DISCOVERY_DEPS_PATTERNS`:
   the classification rule table (system config / cache / deps).
-- `SANDBOX_DETECT_RULES`: the `marker|type|module` table for project detection.
+- `SIEVEBOX_DETECT_RULES`: the `marker|type|module` table for project detection.

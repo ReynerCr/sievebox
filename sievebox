@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# Script Name: sandbox-run
+# Script Name: sievebox
 # Description: Modular data-driven bwrap sandbox execution ENGINE.
 #              The module/profile *registry* lives in a separate, sourced
 #              configuration file (see "PROFILE REGISTRY" below). This file is
@@ -116,11 +116,11 @@ extract_tmpfs_paths() {
 
 print_usage() {
   cat <<'EOF'
-Usage: sandbox-run [options] <binary> [args...]
+Usage: sievebox [options] <binary> [args...]
 
 Runs <binary> inside a bubblewrap sandbox using the profile registered for it.
 Options are recognized only BEFORE <binary>; everything after <binary> is passed
-verbatim to it (so `sandbox-run devin --help` shows devin's help).
+verbatim to it (so `sievebox devin --help` shows devin's help).
 
 Options:
   -h, --help     Show this help and exit
@@ -129,16 +129,16 @@ Options:
                  expanded). With no binary, list all registered binaries.
       --status   Show the resolved sandbox config for <binary> (does not run it)
       --discover Run <binary> under strace to discover missing path permissions
-                 (requires strace; needs sandbox-discovery.sh). Also prints an
-                 advisory project-type heads-up (disable: SANDBOX_AUTO_DETECT=false)
+                 (requires strace; needs sievebox-discovery.sh). Also prints an
+                 advisory project-type heads-up (disable: SIEVEBOX_AUTO_DETECT=false)
   -p, --prompt   Offer to create missing optional (-try) bind directories
-                 (also enabled via SANDBOX_PROMPT=true)
+                 (also enabled via SIEVEBOX_PROMPT=true)
 
 Configuration:
   The module/profile registry is sourced from the first existing of:
-    1. $SANDBOX_RUN_CONFIG
-    2. sandbox-profiles.sh next to this script
-    3. ${XDG_CONFIG_HOME:-~/.config}/sandbox-run/profiles.sh
+    1. $SIEVEBOX_CONFIG
+    2. sievebox-profiles.sh next to this script
+    3. ${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.sh
 EOF
 }
 
@@ -147,9 +147,9 @@ EOF
 # ==============================================================================
 # Sandbox control flags are recognized ONLY in leading position. The first
 # non-flag token is the target binary; everything AFTER it is passed verbatim to
-# the sandboxed app (so e.g. `sandbox-run devin --help` reaches devin, not us).
+# the sandboxed app (so e.g. `sievebox devin --help` reaches devin, not us).
 MODE="run"                        # run | list | status | discover
-PROMPT="${SANDBOX_PROMPT:-false}" # offer to create missing -try bind dirs
+PROMPT="${SIEVEBOX_PROMPT:-false}" # offer to create missing -try bind dirs
 
 set_primary_mode() {
   # Primary modes (status/discover) are mutually exclusive.
@@ -208,7 +208,7 @@ CORE_ARGS=(
   --unshare-all
   --unshare-user
   --disable-userns
-  --hostname "sandbox-$TARGET_BIN"
+  --hostname "sievebox-$TARGET_BIN"
   --die-with-parent
   --new-session
 
@@ -310,38 +310,38 @@ declare -A PROFILE_ROOT_MOD   # binary -> identity module (prompt color)
 # ==============================================================================
 # Keep the engine generic: the actual modules/profiles live in a config file.
 # Discovery order (first existing file wins):
-#   1. $SANDBOX_RUN_CONFIG (explicit override)
-#   2. sandbox-profiles.sh next to this script
-#   3. ${XDG_CONFIG_HOME:-~/.config}/sandbox-run/profiles.sh
+#   1. $SIEVEBOX_CONFIG (explicit override)
+#   2. sievebox-profiles.sh next to this script
+#   3. ${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.sh
 SCRIPT_DIR="$(cd -- "$(dirname -- "$(realpath -- "$0")")" && pwd)"
-CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}/sandbox-run/profiles.sh"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}/sievebox/profiles.sh"
 CONFIG_CANDIDATES=(
-  "${SANDBOX_RUN_CONFIG:-}"
-  "$SCRIPT_DIR/sandbox-profiles.sh"
+  "${SIEVEBOX_CONFIG:-}"
+  "$SCRIPT_DIR/sievebox-profiles.sh"
   "$CONFIG_HOME"
 )
 
-SANDBOX_CONFIG=""
+SIEVEBOX_CONFIG=""
 for cand in "${CONFIG_CANDIDATES[@]}"; do
   if [ -n "$cand" ] && [ -f "$cand" ]; then
-    SANDBOX_CONFIG="$cand"
+    SIEVEBOX_CONFIG="$cand"
     break
   fi
 done
 
-if [ -z "$SANDBOX_CONFIG" ]; then
-  echo "Error: no sandbox profile configuration found. Looked for:" >&2
-  printf '  - %s\n' "$SCRIPT_DIR/sandbox-profiles.sh" "$CONFIG_HOME" >&2
-  echo "Set SANDBOX_RUN_CONFIG=<file> to override." >&2
+if [ -z "$SIEVEBOX_CONFIG" ]; then
+  echo "Error: no sievebox profile configuration found. Looked for:" >&2
+  printf '  - %s\n' "$SCRIPT_DIR/sievebox-profiles.sh" "$CONFIG_HOME" >&2
+  echo "Set SIEVEBOX_CONFIG=<file> to override." >&2
   exit 1
 fi
 
 # shellcheck source=/dev/null
-source "$SANDBOX_CONFIG"
+source "$SIEVEBOX_CONFIG"
 
 # Shared state directory (XDG_STATE) used by optional features such as permission
 # discovery. Created on demand by the feature that needs it.
-SANDBOX_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/sandbox-run"
+SIEVEBOX_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/sievebox"
 
 # --- Profile inheritance flattening (shared by --list and the run path) --------
 # Each module may declare base modules via MODULE_EXTENDS["mod"]="base...". We
@@ -377,7 +377,7 @@ if [ "$MODE" = "list" ]; then
     for _arg in "$@"; do
       _bin="$(basename -- "$_arg")"
       if [ -z "${PROFILE_DEPS[$_bin]:-}" ]; then
-        echo "Error: '$_bin' is not registered. Run 'sandbox-run --list' for all." >&2
+        echo "Error: '$_bin' is not registered. Run 'sievebox --list' for all." >&2
         continue
       fi
       _d="${PROFILE_DEPS[$_bin]}"
@@ -390,7 +390,7 @@ if [ "$MODE" = "list" ]; then
       echo
     done
   else
-    echo "Registered sandbox binaries:"
+    echo "Registered sievebox binaries:"
     for bin in $(printf '%s\n' "${!PROFILE_DEPS[@]}" | sort); do
       printf '  %-14s -> %s\n' "$bin" "${PROFILE_DEPS[$bin]}"
     done
@@ -418,7 +418,7 @@ fi
 # Validate that the requested binary has a routing mapping profile
 if [ -z "${PROFILE_DEPS[$TARGET_BIN]:-}" ]; then
   echo "Error: The binary '$TARGET_BIN' is not registered in any sandbox profile." >&2
-  echo "       Run 'sandbox-run --list' to see registered binaries." >&2
+  echo "       Run 'sievebox --list' to see registered binaries." >&2
   exit 1
 fi
 
@@ -445,7 +445,7 @@ compute_effective_deps "$DEPS_LIST"
 if ! command -v "$1" >/dev/null 2>&1; then
   echo "Warning: '$1' was not found on PATH; execution may fail." >&2
   echo "         Effective modules: $EFFECTIVE_DEPS" >&2
-  echo "         Config file:       $SANDBOX_CONFIG" >&2
+  echo "         Config file:       $SIEVEBOX_CONFIG" >&2
 fi
 
 for MOD in $EFFECTIVE_DEPS; do
@@ -502,7 +502,7 @@ else
   )
 fi
 
-SANDBOX_PATH=$HERE
+SIEVEBOX_PATH=$HERE
 COLOR_PATH=119
 
 # ** WORKSPACE BIND POLICY ($HERE Directory injection)
@@ -513,7 +513,7 @@ if [ "$HERE" != "$HOME" ] && [ -n "$HOME_PATTERN" ] && ! matches_pattern "$TARGE
   HERE_DECISION="mounted"
 else
   notify "\n$($OUTPUT_COLOR 1)[Security Policy]$($RESET_COLOR) \$HERE NOT MOUNTED for: $($OUTPUT_COLOR $RESOLVED_COLOR)$TARGET_BIN$($RESET_COLOR)"
-  SANDBOX_PATH="NONE"
+  SIEVEBOX_PATH="NONE"
   COLOR_PATH=1
   HERE_DECISION="not mounted"
 fi
@@ -531,7 +531,7 @@ fi
 
 EXEC_CMD="
   # Always set a different PS1 env in case somehow we enter in a bash shell
-  export PS1=\"$($OUTPUT_COLOR $RESOLVED_COLOR)[sandbox] \w\\\\$ $($RESET_COLOR)\"
+  export PS1=\"$($OUTPUT_COLOR $RESOLVED_COLOR)[sievebox] \w\\\\$ $($RESET_COLOR)\"
 
   # Execute dynamically fused environmental profiles
   $FUSED_ENV_SCRIPTS
@@ -540,7 +540,7 @@ EXEC_CMD="
   if [ -n \"\${CONDA_ENV:-}\" ] && [ -f /etc/profile.d/conda.sh ]; then
     source /etc/profile.d/conda.sh
     conda activate \"\$CONDA_ENV\"
-    echo \"$($OUTPUT_COLOR $RESOLVED_COLOR)[Sandbox]$($RESET_COLOR) Attached to $($OUTPUT_COLOR ${MODULE_COLOR[conda]:-2})Conda$($RESET_COLOR) environment: \$CONDA_DEFAULT_ENV\"
+    echo \"$($OUTPUT_COLOR $RESOLVED_COLOR)[sievebox]$($RESET_COLOR) Attached to $($OUTPUT_COLOR ${MODULE_COLOR[conda]:-2})Conda$($RESET_COLOR) environment: \$CONDA_DEFAULT_ENV\"
   fi
 
   # exec anything other than conda
@@ -554,8 +554,8 @@ EXEC_CMD="
 # STATUS MODE (report, do not run) — branches BEFORE any execution
 # ==============================================================================
 if [ "$MODE" = "status" ]; then
-  echo "Sandbox status for: $TARGET_BIN"
-  echo "  Config file:        $SANDBOX_CONFIG"
+  echo "Sievebox status for: $TARGET_BIN"
+  echo "  Config file:        $SIEVEBOX_CONFIG"
   echo "  Declared modules:   $DEPS_LIST"
   echo "  Effective modules:  $EFFECTIVE_DEPS"
   echo "  Root (identity):    $ROOT_MOD_ID (color $RESOLVED_COLOR)"
@@ -598,31 +598,31 @@ BRIGHT_WHITE=231
 
 echo "$($OUTPUT_COLOR $BRIGHT_YELLOW)======================================================"
 echo "$($OUTPUT_COLOR $BRIGHT_WHITE) Entering Sandboxed Container Engine"
-echo " Host Path:  $($OUTPUT_COLOR $COLOR_PATH)$SANDBOX_PATH$($RESET_COLOR)"
+echo " Host Path:  $($OUTPUT_COLOR $COLOR_PATH)$SIEVEBOX_PATH$($RESET_COLOR)"
 echo "$($OUTPUT_COLOR $BRIGHT_WHITE) Executing:  $($OUTPUT_COLOR $RESOLVED_COLOR)$TARGET_BIN$($RESET_COLOR)"
 echo "$($OUTPUT_COLOR $BRIGHT_YELLOW)======================================================$($RESET_COLOR)"
 echo -e "\n"
 
 # The argument vector that follows `bwrap` for BOTH a normal run and discovery.
-SANDBOX_INVOCATION=(
+SIEVEBOX_INVOCATION=(
   "${FINAL_BWRAP_ARGS[@]}" --remount-ro "/" bash -c "$EXEC_CMD" "$TARGET_BIN" "$@"
 )
 
 # Discovery mode: run the EXACT same sandbox under strace to surface missing path
-# permissions. Implemented in the optional sandbox-discovery.sh, sourced only here
+# permissions. Implemented in the optional sievebox-discovery.sh, sourced only here
 # so the core engine stays free of discovery logic (Decisions #1, #2, #8).
 if [ "$MODE" = "discover" ]; then
-  DISCOVERY_LIB="$SCRIPT_DIR/sandbox-discovery.sh"
+  DISCOVERY_LIB="$SCRIPT_DIR/sievebox-discovery.sh"
   if [ ! -f "$DISCOVERY_LIB" ]; then
     echo "Error: --discover requires '$DISCOVERY_LIB' (not found)." >&2
     exit 1
   fi
   # shellcheck source=/dev/null
   source "$DISCOVERY_LIB"
-  run_discovery "${SANDBOX_INVOCATION[@]}"
+  run_discovery "${SIEVEBOX_INVOCATION[@]}"
   exit $?
 fi
 
 # Single unified execution point. Processes variables securely, applies absolute 
 # directory constraints, mounts the target paths, and handles parameters natively.
-exec bwrap "${SANDBOX_INVOCATION[@]}"
+exec bwrap "${SIEVEBOX_INVOCATION[@]}"

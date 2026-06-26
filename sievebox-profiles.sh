@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # ==============================================================================
-# sandbox-profiles.sh — sandbox-run profile registry (DATA / configuration)
+# sievebox-profiles.sh — sievebox profile registry (DATA / configuration)
 # ==============================================================================
-# This file is *sourced* by the `sandbox-run` engine; it is not executed on its
+# This file is *sourced* by the `sievebox` engine; it is not executed on its
 # own. The engine guarantees the following are already defined when this file
 # is sourced:
 #   - register_module()                 (function)
@@ -14,9 +14,9 @@
 #   - TARGET_BIN / HERE / HOME          (current invocation context)
 #
 # Discovery order used by the engine (first existing file wins):
-#   1. $SANDBOX_RUN_CONFIG
-#   2. sandbox-profiles.sh next to the sandbox-run script
-#   3. ${XDG_CONFIG_HOME:-~/.config}/sandbox-run/profiles.sh
+#   1. $SIEVEBOX_CONFIG
+#   2. sievebox-profiles.sh next to the sievebox script
+#   3. ${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.sh
 # ==============================================================================
 
 # ==============================================================================

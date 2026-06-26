@@ -1,14 +1,14 @@
 # shellcheck shell=bash
 # ==============================================================================
-# sandbox-discovery.sh — optional permission-discovery engine for sandbox-run
+# sievebox-discovery.sh — optional permission-discovery engine for sievebox
 # ==============================================================================
-# Sourced by `sandbox-run` ONLY in --discover mode. Runs the EXACT same sandbox
+# Sourced by `sievebox` ONLY in --discover mode. Runs the EXACT same sandbox
 # under host-side strace (following forks), then classifies the paths the app
 # could not access into actionable CATEGORIES (see PLAN.md "Phase 6").
 #
 # Engine guarantees these are defined when sourced: extract_bound_paths(),
-# extract_tmpfs_paths(), TARGET_BIN, EFFECTIVE_DEPS, SANDBOX_CONFIG,
-# SANDBOX_STATE_DIR, HERE, HOME, PATH.
+# extract_tmpfs_paths(), TARGET_BIN, EFFECTIVE_DEPS, SIEVEBOX_CONFIG,
+# SIEVEBOX_STATE_DIR, HERE, HOME, PATH.
 # ==============================================================================
 
 # Errno failures treated as candidates. EROFS is included so write attempts that
@@ -30,12 +30,12 @@ DISCOVERY_DEPS_PATTERNS="${DISCOVERY_DEPS_PATTERNS:-/node_modules/}"
 # --- Project-type detection (Phase 4, advisory) -------------------------------
 # Folded into discovery (its natural home: detection is an upfront, heuristic
 # subset of what the trace proves empirically). Runs by default; opt out with
-# SANDBOX_AUTO_DETECT=false. PURELY ADVISORY: prints a heads-up, never touches
+# SIEVEBOX_AUTO_DETECT=false. PURELY ADVISORY: prints a heads-up, never touches
 # the sandbox. Rules are "marker|type|module" (module optional), env-overridable:
 # a marker file present in $HERE flags <type>; if <module> is set and NOT already
 # in EFFECTIVE_DEPS, it is reported as a likely gap to watch for below.
-SANDBOX_AUTO_DETECT="${SANDBOX_AUTO_DETECT:-true}"
-SANDBOX_DETECT_RULES="${SANDBOX_DETECT_RULES:-
+SIEVEBOX_AUTO_DETECT="${SIEVEBOX_AUTO_DETECT:-true}"
+SIEVEBOX_DETECT_RULES="${SIEVEBOX_DETECT_RULES:-
 package.json|node|node
 Cargo.toml|rust|dev_base
 pyproject.toml|python|conda
@@ -48,7 +48,7 @@ tauri.conf.json|tauri|
 
 # Print an advisory "expected vs covered" heads-up before tracing (Phase 4).
 _discovery_project_hints() {
-  [ "$SANDBOX_AUTO_DETECT" = "true" ] || return 0
+  [ "$SIEVEBOX_AUTO_DETECT" = "true" ] || return 0
   local marker type mod types="" gaps=""
   while IFS='|' read -r marker type mod; do
     [ -n "$marker" ] || continue
@@ -58,7 +58,7 @@ _discovery_project_hints() {
       case " $gaps " in *" $mod "*) ;; *) gaps+="$mod " ;; esac
     fi
   done <<EOF
-$SANDBOX_DETECT_RULES
+$SIEVEBOX_DETECT_RULES
 EOF
   [ -n "$types" ] || return 0
   echo "[detect] Project in $HERE looks like: ${types% }"
@@ -79,9 +79,9 @@ run_discovery() {
 
   local ts run_dir trace failures probing summary bound tmpfs detect rc=0
   ts="$(date +%Y%m%d-%H%M%S)"
-  run_dir="$SANDBOX_STATE_DIR/discovery/${TARGET_BIN}-${ts}"
+  run_dir="$SIEVEBOX_STATE_DIR/discovery/${TARGET_BIN}-${ts}"
   mkdir -p "$run_dir"
-  chmod 700 "$SANDBOX_STATE_DIR" 2>/dev/null || true
+  chmod 700 "$SIEVEBOX_STATE_DIR" 2>/dev/null || true
   trace="$run_dir/trace.raw"
   failures="$run_dir/failures.log"   # rows: bucket<TAB>count<TAB>lastnr<TAB>path<TAB>E|M
   probing="$run_dir/probing.log"
@@ -325,7 +325,7 @@ _discovery_section() {
 _discovery_suggest() {
   local failures="$1" kind path rel
   echo "# Effective modules for $TARGET_BIN: $EFFECTIVE_DEPS"
-  echo "# Paste into the most appropriate module in: $SANDBOX_CONFIG"
+  echo "# Paste into the most appropriate module in: $SIEVEBOX_CONFIG"
   echo "# WRITE entries usually need rw --bind; others default to --bind-try."
   awk -F'\t' -v home="$HOME" '
     $1!="WRITE" && $1!="APP" { next }
