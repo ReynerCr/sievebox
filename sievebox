@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# Script Name: sievebox
-# Description: Modular data-driven bwrap sandbox execution ENGINE.
-#              The module/profile *registry* lives in a separate, sourced
-#              configuration file (see "PROFILE REGISTRY" below). This file is
-#              the generic engine: it composes the registered modules into a
-#              single bwrap invocation and launches it.
+# sievebox: a data-driven bwrap sandbox ENGINE.
+# Composes the modules from a sourced profile registry (see "PROFILE REGISTRY")
+# into a single bwrap invocation and launches it.
 # ==============================================================================
 
 # Strict error handling
@@ -54,13 +51,10 @@ register_module() {
   eval "$array_name=(\"\$@\")"
 }
 
-# Print (one per line) the DESTINATION paths actually populated FROM THE HOST by a
-# bwrap argument vector ("$@"): bind/dev-bind (and -try whose source EXISTS),
-# symlink targets, plus /dev and /proc. Excludes every --tmpfs (incl. "/"), since
-# the root tmpfs is precisely WHY unbound paths fail. Used by the optional
-# discovery engine to filter out failures under already-provided paths (Decision
-# #5). Implemented with `if` (not `&&`) so a non-existent -try source does not
-# trip `set -e`.
+# Print (one per line) the DEST paths a bwrap arg vector populates from the host:
+# bind/dev-bind, existing -try sources, symlink targets, /dev, /proc. Excludes
+# --tmpfs (incl. "/"): the root tmpfs is why unbound paths fail. Lets discovery
+# filter already-provided paths. `if` (not `&&`) keeps it set -e safe.
 extract_bound_paths() {
   local args=("$@") n=$# i=0 flag src dst
   while [ "$i" -lt "$n" ]; do
@@ -89,12 +83,9 @@ extract_bound_paths() {
   printf '%s\n' "/dev" "/proc"
 }
 
-# Print (one per line) the non-root --tmpfs DESTINATIONS in a bwrap arg vector
-# (e.g. /tmp, /run, /var/cache/fontconfig). The root tmpfs "/" is EXCLUDED on
-# purpose: every unbound path lives under "/", so including it would swallow all
-# candidates. Used by discovery's R6 "ephemeral/cache" bucket — failures under a
-# writable sandbox tmpfs are app-internal scratch that a host bind cannot fix.
-# Operand counts mirror extract_bound_paths so destinations are never misparsed.
+# Print (one per line) the non-root --tmpfs DESTINATIONS (e.g. /tmp, /run); "/" is
+# excluded since every unbound path lives under it. Feeds discovery's "ephemeral
+# cache" bucket. Operand counts mirror extract_bound_paths.
 extract_tmpfs_paths() {
   local args=("$@") n=$# i=0 flag dst
   while [ "$i" -lt "$n" ]; do
@@ -210,7 +201,8 @@ CORE_ARGS=(
   --disable-userns
   --hostname "sievebox-$TARGET_BIN"
   --die-with-parent
-  --new-session
+  --new-session   # avoid TIOCSTI terminal injection (CVE-2017-5226); mandatory
+  --cap-drop ALL  # explicit; already a no-op under --unshare-user
 
   # Start from an EMPTY environment and re-introduce only an explicit allowlist
   # (see CORE_SETENV / MODULE_SETENV below). This prevents host secrets such as
@@ -244,7 +236,7 @@ CORE_ARGS=(
   --ro-bind-try "/etc/localtime" "/etc/localtime"
 
   --tmpfs "/var/cache/fontconfig"
-  --ro-bind "$HOME/.cache/fontconfig" "$HOME/.cache/fontconfig"
+  --ro-bind-try "$HOME/.cache/fontconfig" "$HOME/.cache/fontconfig"
   --ro-bind-try "/etc/ld.so.conf.d" "/etc/ld.so.conf.d"
   --ro-bind-try "/etc/ld.so.cache" "/etc/ld.so.cache"
   --ro-bind-try "/etc/ld.so.conf" "/etc/ld.so.conf"
@@ -271,21 +263,6 @@ CORE_ARGS=(
   --ro-bind-try "$HOME/.config/gtkrc-2.0" "$HOME/.config/gtkrc-2.0"
 )
 
-# Display capabilities for plotting/Graphical UIs (e.g., Matplotlib, Cypress).
-# Only bind the Wayland socket when it is actually present in the environment.
-if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
-  if [ -n "${WAYLAND_DISPLAY:-}" ]; then
-    CORE_ARGS+=(--ro-bind-try "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY")
-  fi
-
-  CORE_ARGS+=(
-    --ro-bind-try "$XDG_RUNTIME_DIR/pulse" "$XDG_RUNTIME_DIR/pulse"
-    --ro-bind-try "$XDG_RUNTIME_DIR/pipewire-0" "$XDG_RUNTIME_DIR/pipewire-0"
-    --ro-bind-try "$XDG_RUNTIME_DIR/pulse/native" "$XDG_RUNTIME_DIR/pulse/native"
-    --ro-bind-try "$HOME/.config/pulse/cookie" "$HOME/.config/pulse/cookie"
-  )
-fi
-
 # ** Base environment allowlist re-introduced into the cleared sandbox env.
 # ** Each name is forwarded with --setenv ONLY if it is set and non-empty.
 # ** Keep this minimal; secrets must never be added here.
@@ -293,8 +270,7 @@ CORE_SETENV=(
   HOME PATH USER LOGNAME
   TERM COLORTERM
   LANG LANGUAGE LC_ALL LC_CTYPE
-  # Session/display vars (harmless for CLI tools, required for graphical ones)
-  XDG_RUNTIME_DIR XDG_SESSION_TYPE WAYLAND_DISPLAY DISPLAY
+  XDG_RUNTIME_DIR XDG_SESSION_TYPE
 )
 
 # Registry tables populated by the sourced configuration file.
@@ -490,9 +466,8 @@ if matches_pattern "$TARGET_BIN" "$NET_PATTERN"; then
   notify "\n$($OUTPUT_COLOR 1)[Security Policy]$($RESET_COLOR) Network Access DISABLED for: $($OUTPUT_COLOR $RESOLVED_COLOR)$TARGET_BIN$($RESET_COLOR)"
 else
   NET_DECISION="enabled"
-  # Include dns resolve and cert folders
-  # !! BE AWARE that this is probably not good for production because it doesn't exclude private certs)
-  # also this was tested on RHEL like OS (e.g. Fedora)
+  # DNS + cert dirs. NOTE: binds all of /etc/ssl & /etc/pki (incl. any private
+  # certs); tested on RHEL-like (Fedora).
   FINAL_BWRAP_ARGS+=(
     --share-net
     --ro-bind-try "/etc/resolv.conf" "/etc/resolv.conf"
@@ -519,39 +494,30 @@ else
 fi
 
 # ==============================================================================
-# UNIFIED INTERACTIVE COMMAND GENERATION (EXEC_CMD)
+# EXEC_CMD: in-sandbox launch script (PS1, fused env scripts, conda, exec)
 # ==============================================================================
-# Dynamically writes the complete shell loader block.
-# Manages path activation and ensures an aesthetic, isolated PS1 prompt.
-# ==============================================================================
-
-# ** EXEC_CMD setup. Configures the script to run according to the modules
-# ** loaded, setups the sandbox (modifying the PS1 variable) and configures
-# ** if the sandbox should persist or not after TARGET_BIN ends its execution.
-
 EXEC_CMD="
-  # Always set a different PS1 env in case somehow we enter in a bash shell
+  # PS1 in case we land in an interactive shell
   export PS1=\"$($OUTPUT_COLOR $RESOLVED_COLOR)[sievebox] \w\\\\$ $($RESET_COLOR)\"
 
-  # Execute dynamically fused environmental profiles
+  # Fused per-module env scripts
   $FUSED_ENV_SCRIPTS
 
-  # If an external or default Conda environment is specified, load it natively
+  # Activate the Conda env if one was requested
   if [ -n \"\${CONDA_ENV:-}\" ] && [ -f /etc/profile.d/conda.sh ]; then
     source /etc/profile.d/conda.sh
     conda activate \"\$CONDA_ENV\"
     echo \"$($OUTPUT_COLOR $RESOLVED_COLOR)[sievebox]$($RESET_COLOR) Attached to $($OUTPUT_COLOR ${MODULE_COLOR[conda]:-2})Conda$($RESET_COLOR) environment: \$CONDA_DEFAULT_ENV\"
   fi
 
-  # exec anything other than conda
+  # exec the target (the conda module handles its own interactive case)
   if [ \"\$0\" != \"conda\" ]; then
-    # Standard direct binary execution mechanism (Node ecosystem and automated AI agents)
     exec \"\$@\"
   fi
 "
 
 # ==============================================================================
-# STATUS MODE (report, do not run) — branches BEFORE any execution
+# STATUS MODE (report, do not run): branches BEFORE any execution
 # ==============================================================================
 if [ "$MODE" = "status" ]; then
   echo "Sievebox status for: $TARGET_BIN"
@@ -610,7 +576,7 @@ SIEVEBOX_INVOCATION=(
 
 # Discovery mode: run the EXACT same sandbox under strace to surface missing path
 # permissions. Implemented in the optional sievebox-discovery.sh, sourced only here
-# so the core engine stays free of discovery logic (Decisions #1, #2, #8).
+# so the core engine stays free of discovery logic.
 if [ "$MODE" = "discover" ]; then
   DISCOVERY_LIB="$SCRIPT_DIR/sievebox-discovery.sh"
   if [ ! -f "$DISCOVERY_LIB" ]; then
@@ -623,6 +589,5 @@ if [ "$MODE" = "discover" ]; then
   exit $?
 fi
 
-# Single unified execution point. Processes variables securely, applies absolute 
-# directory constraints, mounts the target paths, and handles parameters natively.
+# Single execution point: exec bwrap with the composed invocation.
 exec bwrap "${SIEVEBOX_INVOCATION[@]}"

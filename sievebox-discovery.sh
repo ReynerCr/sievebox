@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # ==============================================================================
-# sievebox-discovery.sh — optional permission-discovery engine for sievebox
+# sievebox-discovery.sh -> optional permission-discovery engine for sievebox
 # ==============================================================================
 # Sourced by `sievebox` ONLY in --discover mode. Runs the EXACT same sandbox
 # under host-side strace (following forks), then classifies the paths the app
@@ -12,28 +12,25 @@
 # ==============================================================================
 
 # Errno failures treated as candidates. EROFS is included so write attempts that
-# fail because the root is a tmpfs (the usual crash cause) are captured (R1).
+# fail because the root is a tmpfs (the usual crash cause) are captured.
 DISCOVERY_ERRNOS="${DISCOVERY_ERRNOS:-ENOENT EACCES EROFS}"
 
-# --- Rule-based classification table (R7) -------------------------------------
+# --- Rule-based classification table -------------------------------------
 # Declarative path->category rules. SYS uses PREFIX matching (entry == path or a
 # parent of it); CACHE/DEPS use SUBSTRING matching. All are env-overridable so
 # users can extend the taxonomy without touching the awk classifier.
 #   SYS    known system/libc config        -> "usually optional"
 #   CACHE  regenerable cache dirs          -> "ignore, regenerated"
 #   DEPS   node_modules (sans .bin)        -> "missing package? not installed"
-# tmpfs destinations are discovered dynamically (R6) and form the EPHEM bucket.
+# tmpfs destinations are discovered dynamically and form the EPHEM bucket.
 DISCOVERY_SYS_PATHS="${DISCOVERY_SYS_PATHS:-/etc/localtime /etc/passwd /etc/group /etc/shadow /etc/nsswitch.conf /etc/host.conf /etc/hosts /etc/resolv.conf /etc/netsvc.conf /etc/ld.so.preload /etc/ld.so.cache /etc/machine-id /etc/os-release /etc/lsb-release /etc/timezone /etc/openssl /etc/ssl /etc/pki /etc/gtk-2.0 /etc/gtk-3.0 /etc/fonts}"
 DISCOVERY_CACHE_PATTERNS="${DISCOVERY_CACHE_PATTERNS:-/.cache/ /var/cache/ /_cacache/ node-compile-cache /.cache-loader/}"
 DISCOVERY_DEPS_PATTERNS="${DISCOVERY_DEPS_PATTERNS:-/node_modules/}"
 
 # --- Project-type detection (Phase 4, advisory) -------------------------------
-# Folded into discovery (its natural home: detection is an upfront, heuristic
-# subset of what the trace proves empirically). Runs by default; opt out with
-# SIEVEBOX_AUTO_DETECT=false. PURELY ADVISORY: prints a heads-up, never touches
-# the sandbox. Rules are "marker|type|module" (module optional), env-overridable:
-# a marker file present in $HERE flags <type>; if <module> is set and NOT already
-# in EFFECTIVE_DEPS, it is reported as a likely gap to watch for below.
+# Advisory only (never touches the sandbox); opt out with SIEVEBOX_AUTO_DETECT=false.
+# Rules are "marker|type|module" (module optional): a marker file in $HERE flags
+# <type>; if <module> is set and missing from EFFECTIVE_DEPS, it's reported as a gap.
 SIEVEBOX_AUTO_DETECT="${SIEVEBOX_AUTO_DETECT:-true}"
 SIEVEBOX_DETECT_RULES="${SIEVEBOX_DETECT_RULES:-
 package.json|node|node
@@ -94,8 +91,7 @@ run_discovery() {
   extract_tmpfs_paths "$@" | sort -u > "$tmpfs"
 
   echo
-  # Phase 4: advisory expected-vs-covered heads-up. tee so it is BOTH shown now
-  # (before the run) and persisted as an artifact / folded into the summary.
+  # Advisory heads-up; tee so it's shown now AND persisted/folded into the summary.
   _discovery_project_hints | tee "$detect"
   echo "[discovery] Tracing '$TARGET_BIN'. Use it normally, then exit to analyze."
   echo "[discovery] Artifacts: $run_dir"
@@ -106,7 +102,7 @@ run_discovery() {
   : > "$failures"
   : > "$probing"
   _discovery_classify "$trace" "$bound" "$tmpfs" "$failures" "$probing"
-  _discovery_mark_exists "$failures"   # R8: annotate each row with host existence
+  _discovery_mark_exists "$failures"   # annotate each row with host existence
 
   _discovery_summary "$failures" "$probing" "$detect" > "$summary"
 
@@ -136,13 +132,13 @@ run_discovery() {
 # ------------------------------------------------------------------------------
 # Single-pass awk classifier. Buckets each candidate path (failed, not already
 # provided, never succeeded unless write-blocked) into exactly one of:
-#   EPHEM  under a writable sandbox tmpfs -> regenerated scratch (R6)
-#   WRITE  app tried to create/write (EROFS/EACCES on a write syscall)   [R1]
-#   PATHL  parent dir is a $PATH entry -> binary lookup                  [R2]
-#   DEPS   under node_modules (missing package?)                        [R7]
-#   CACHE  regenerable cache dir                                        [R7]
-#   SYS    known system/libc config (/etc/...)                          [R3]
-#   WALK   same basename failing across >=2 ancestor dirs of $HERE       [R4]
+#   EPHEM  under a writable sandbox tmpfs -> regenerated scratch
+#   WRITE  app tried to create/write (EROFS/EACCES on a write syscall)
+#   PATHL  parent dir is a $PATH entry -> binary lookup
+#   DEPS   under node_modules (missing package?)
+#   CACHE  regenerable cache dir
+#   SYS    known system/libc config (/etc/...)
+#   WALK   same basename failing across >=2 ancestor dirs of $HERE
 #   APP    everything else (the real signal)
 # Also records last-seen order per path and the first fatal-exit position for
 # the "most likely culprits" view. Probing (failed-then-succeeded) -> PROB.
@@ -158,11 +154,11 @@ _discovery_classify() {
       # PATH entries -> set (normalized: collapse //, strip trailing /)
       np = split(pathenv, pa, ":")
       for (i=1;i<=np;i++){ d=pa[i]; gsub(/\/+/,"/",d); if(length(d)>1) sub(/\/$/,"",d); if(d!="") PSET[d]=1 }
-      # rule tables (R7): SYS prefixes, CACHE/DEPS substrings
+      # rule tables: SYS prefixes, CACHE/DEPS substrings
       ns = split(syspaths, sa, " "); for (i=1;i<=ns;i++) SYSP[sa[i]]=1
       nc = split(cachepats, ca, " "); for (i=1;i<=nc;i++) CACHEP[i]=ca[i]; ncp=nc
       nd = split(depspats, da, " "); for (i=1;i<=nd;i++) DEPSP[i]=da[i]; ndp=nd
-      # tmpfs destinations (R6) -> EPHEM prefixes (root "/" already excluded)
+      # tmpfs destinations -> EPHEM prefixes (root "/" already excluded)
       while ((getline line < tmpfsfile) > 0) { if (line!="") TMPFS[line]=1 }
       close(tmpfsfile)
       fatal=0
@@ -232,12 +228,9 @@ _discovery_classify() {
 }
 
 # ------------------------------------------------------------------------------
-# R8: annotate each classified row with host existence as a 5th field (E|M).
-# Done host-side (the sandbox is gone) so the summary can show, and order by,
-# whether the path actually EXISTS on the host: an [exists] path is a candidate
-# real fix (host has it, sandbox lacked a bind), while a [missing] one is an app
-# probe for something not on disk (binding its parent cannot help). Cheap: one
-# stat per distinct path, once. The META row is passed through untouched.
+# tag each row with host existence (5th field E|M). [exists] = real fix
+# candidate (host has it, sandbox lacked a bind); [missing] = app probe for a
+# nonexistent path. One stat per row, host-side. META row passes through.
 # ------------------------------------------------------------------------------
 _discovery_mark_exists() {
   local f="$1" tmp="$1.tmp" bucket count last path
@@ -257,7 +250,7 @@ _discovery_mark_exists() {
 }
 
 # ------------------------------------------------------------------------------
-# Build the categorized, actionability-ordered summary (R5/R6/R7) from the
+# Build the categorized, actionability-ordered summary from the
 # classified rows. Reads bucket<TAB>count<TAB>lastnr<TAB>path<TAB>E|M (+ META).
 # ------------------------------------------------------------------------------
 _discovery_summary() {
@@ -266,7 +259,7 @@ _discovery_summary() {
 
   echo "# Discovery summary for '$TARGET_BIN'  (errnos: ${DISCOVERY_ERRNOS// //})"
   echo "# [exists]=on host, a real bind candidate;  [missing]=app probe, not on disk"
-  echo "# count  tag  path     — failures.log is the raw source of truth"
+  echo "# count  tag  path    -> failures.log is the raw source of truth"
 
   # Phase 4: include the project-detection heads-up so the summary is self-contained.
   if [ -n "$detect" ] && [ -s "$detect" ]; then
@@ -293,7 +286,7 @@ _discovery_summary() {
   _discovery_section "$failures" PATHL "PATH binary lookups (almost always harmless)" 12
 
   if [ -s "$probing" ]; then
-    echo; echo "== Probing (failed then later succeeded — ignored) =="
+    echo; echo "== Probing (failed then later succeeded -> ignored) =="
     echo "  $(wc -l < "$probing") path(s); see probing.log"
   fi
   if [ ! -s "$failures" ] || ! grep -qv $'^META\t' "$failures"; then
@@ -302,7 +295,7 @@ _discovery_summary() {
 }
 
 # Print one bucket: [exists] rows first, then [missing], each path-sorted, with
-# an existence tag (R8). Capped at $4 rows; the remainder is noted (see
+# an existence tag. Capped at $4 rows; the remainder is noted (see
 # failures.log for the full set).
 _discovery_section() {
   local failures="$1" tag="$2" title="$3" cap="${4:-40}" total rows
@@ -318,7 +311,7 @@ _discovery_section() {
 }
 
 # ------------------------------------------------------------------------------
-# Print-only Level-1 suggestions for WRITE+APP buckets (Decisions #11, #12):
+# Print-only Level-1 suggestions for WRITE+APP buckets:
 # bounded dir aggregation (one segment under a known root), $HOME-relativized,
 # trailing-slash dirs; WRITE rows hint at rw --bind. Never edits the config.
 # ------------------------------------------------------------------------------

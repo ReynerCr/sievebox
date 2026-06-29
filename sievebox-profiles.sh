@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # ==============================================================================
-# sievebox-profiles.sh — sievebox profile registry (DATA / configuration)
+# sievebox-profiles.sh: sievebox profile registry (DATA / configuration)
 # ==============================================================================
 # This file is *sourced* by the `sievebox` engine; it is not executed on its
 # own. The engine guarantees the following are already defined when this file
@@ -97,7 +97,7 @@ PI_TARGET_DIR="$HOME/AppInstalls/custom-scripts/dev/pi-agent"
 register_module "dev_base" "2" "" \
   --bind-try "$HOME/.cargo" "$HOME/.cargo"
 
-# 3b. DEVELOPMENT Isolation Module — extends dev_base (inherits its binds).
+# 3b. DEVELOPMENT Isolation Module: extends dev_base (inherits its binds).
 # Prompt Color: 2
 MODULE_EXTENDS["webdev"]="dev_base"
 register_module "webdev" "2" "" \
@@ -166,6 +166,37 @@ register_module "specific_projects" "3" "" \
 
   # THIS ONE ABOVE WAS NOT INTENDED FOR GENERAL PURPOSES BUT NEEDED FOR TESTING A LOCAL APP
 
+# ==============================================================================
+# CAPABILITY MODULES: host IPC (Phase 1: moved out of CORE)
+# ==============================================================================
+# ** Expose host SOCKETS, so add them TOP-LEVEL per binary in PROFILE_DEPS: never
+# ** via MODULE_EXTENDS / a shared module (e.g. webdev), or they leak into agents.
+# ** Socket binds are presence-gated against the host env.
+
+# 10. GUI: Wayland display. Low-risk: the compositor isolates clients (no
+# cross-client keylog/capture without the ScreenCast portal, which we don't grant).
+# Prompt Color: Cyan (45)
+GUI_ARGS=()
+if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  GUI_ARGS=(--ro-bind-try "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY")
+fi
+MODULE_SETENV["gui"]="WAYLAND_DISPLAY DISPLAY"
+register_module "gui" "45" "" "${GUI_ARGS[@]}"
+
+# 11. AUDIO: PipeWire + Pulse sockets + cookie. SENSITIVE: grants mic CAPTURE,
+# not just playback. On NOTHING by default; add only on real need, NEVER to agents.
+# Prompt Color: Pink (170)
+AUDIO_ARGS=()
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  AUDIO_ARGS=(
+    --ro-bind-try "$XDG_RUNTIME_DIR/pulse" "$XDG_RUNTIME_DIR/pulse"
+    --ro-bind-try "$XDG_RUNTIME_DIR/pipewire-0" "$XDG_RUNTIME_DIR/pipewire-0"
+    --ro-bind-try "$XDG_RUNTIME_DIR/pulse/native" "$XDG_RUNTIME_DIR/pulse/native"
+    --ro-bind-try "$HOME/.config/pulse/cookie" "$HOME/.config/pulse/cookie"
+  )
+fi
+register_module "audio" "170" "" "${AUDIO_ARGS[@]}"
+
 # ** Add more modules here
 
 # SOME folder that could be added later on are:
@@ -181,24 +212,27 @@ register_module "specific_projects" "3" "" \
 # BINARY TO PROFILE ROUTING MAP
 # ==============================================================================
 # ** Map each BINARY to the space-separated list of modules it should load.
-PROFILE_DEPS["conda"]="conda webdev specific_projects"
-PROFILE_DEPS["npm"]="node webdev gpu specific_projects"
-PROFILE_DEPS["pnpm"]="node webdev specific_projects"
-PROFILE_DEPS["yarn"]="node webdev specific_projects"
-PROFILE_DEPS["npx"]="node webdev specific_projects"
-PROFILE_DEPS["node"]="node webdev specific_projects"
-PROFILE_DEPS["bun"]="node webdev specific_projects"
-PROFILE_DEPS["pi"]="conda node webdev pi_agent rtk_ai specific_projects"
-PROFILE_DEPS["opencode"]="conda node webdev opencode_agent rtk_ai specific_projects"
+# ** `gui` is appended (top-level) to apps that may open windows: node family,
+# ** conda, and agents. `audio` is on NOTHING. Appended last so the root module
+# ** (prompt color) is unaffected.
+PROFILE_DEPS["conda"]="conda webdev specific_projects gui"
+PROFILE_DEPS["npm"]="node webdev gpu specific_projects gui"
+PROFILE_DEPS["pnpm"]="node webdev specific_projects gui"
+PROFILE_DEPS["yarn"]="node webdev specific_projects gui"
+PROFILE_DEPS["npx"]="node webdev specific_projects gui"
+PROFILE_DEPS["node"]="node webdev specific_projects gui"
+PROFILE_DEPS["bun"]="node webdev specific_projects gui"
+PROFILE_DEPS["pi"]="conda node webdev pi_agent rtk_ai specific_projects gui"
+PROFILE_DEPS["opencode"]="conda node webdev opencode_agent rtk_ai specific_projects gui"
 PROFILE_DEPS["llama"]="llama_cpp gpu"
 PROFILE_DEPS["llama-server"]="llama_cpp gpu"
 PROFILE_DEPS["llama-bench"]="llama_cpp gpu"
 PROFILE_DEPS["llama-quantize"]="llama_cpp gpu"
 PROFILE_DEPS["bash"]="simple_module"
-PROFILE_DEPS["rtk"]="rtk_ai"
-PROFILE_DEPS["devin"]="conda node webdev devin_cli rtk_ai specific_projects"
+PROFILE_DEPS["rtk"]="rtk_ai gui"
+PROFILE_DEPS["devin"]="conda node webdev devin_cli rtk_ai specific_projects gui"
 
-# ** Root (identity) module per binary — drives the sandbox prompt color.
+# ** Root (identity) module per binary: drives the sandbox prompt color.
 # ** If a binary is not listed here, the FIRST module in its PROFILE_DEPS is used.
 PROFILE_ROOT_MOD["pi"]="pi_agent"
 PROFILE_ROOT_MOD["opencode"]="opencode_agent"
