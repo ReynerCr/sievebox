@@ -1,0 +1,36 @@
+# Discovery summary for 'node'  (errnos: ENOENT/EACCES/EROFS)
+# [exists]=on host, a real bind candidate;  [missing]=app probe, not on disk
+# count  tag  path    -> failures.log is the raw source of truth
+
+== Most likely culprits (just before exit) ==
+     1  [missing] /home/user/.env.local
+     1  [missing] /home/user/.env
+     1  [missing] /home/user/project/.env.local
+     1  [missing] /home/user/project/.env
+     1  [missing] /home/user/.cache/myapp/data.json
+     1  [missing] /home/user/.cache/myapp
+
+== App tried to CREATE/WRITE here (wants rw --bind)  (2) ==
+     1  [missing] /home/user/.cache/myapp
+     1  [missing] /home/user/.cache/myapp/data.json
+
+== Ancestor-walk dotfile probes (usually noise)  (4) ==
+     1  [missing] /home/user/.env
+     1  [missing] /home/user/.env.local
+     1  [missing] /home/user/project/.env
+     1  [missing] /home/user/project/.env.local
+
+== node_modules lookups (missing package? not installed)  (2) ==
+     1  [missing] /home/user/project/node_modules/express/index.js
+     1  [missing] /home/user/project/node_modules/react/index.js
+
+== Ephemeral sandbox tmpfs (regenerated; do NOT bind)  (1) ==
+     1  [missing] /tmp/node-compile-cache/abc
+
+== System/libc config (usually optional)  (3) ==
+     1  [exists]  /etc/group
+     1  [exists]  /etc/localtime
+     1  [exists]  /etc/passwd
+
+== Probing (failed then later succeeded -> ignored) ==
+  2 path(s); see probing.log

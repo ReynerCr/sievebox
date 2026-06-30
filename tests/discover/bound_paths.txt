@@ -1,0 +1,5 @@
+/usr
+/etc/ld.so.cache
+/etc/ld.so.conf.d
+/dev
+/proc

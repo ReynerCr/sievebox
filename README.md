@@ -11,20 +11,15 @@ sharing one Node module), Llama.cpp, OpenCode, Pi Agent and Devin (CLI), among o
 
 ## The files
 
-There are three pieces (the engine usually finds the config next to itself):
-
-- **`sievebox`**: the engine. Argument parsing, the `CORE_ARGS` base
-  permissions, composition, and the run/list/status/discover modes. Rarely
-  needs modification.
-- **`sievebox-profiles.sh`**: the configuration (data). All the modules,
+- **`bin/sievebox`**: thin entry point on `$PATH`. Delegates to the Python
+  package under `src/sievebox/`.
+- **`src/sievebox/`**: the engine (CLI, config loader, composer, discovery).
+- **`sievebox-profiles.yaml`**: the configuration (data). All the modules,
   per-app routing, and host policy knobs. **This is the file that needs edits to add new profiles.**
-- **`sievebox-discovery.sh`**: optional. Powers `--discover` (and the project
-  detection that runs with it). Delete it and everything except `--discover`
-  still works.
 
 The config is loaded from the first that exists: `$SIEVEBOX_CONFIG`, then
-`sievebox-profiles.sh` next to the script, then
-`${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.sh`.
+`sievebox-profiles.yaml` next to the repo root, then
+`${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.yaml`.
 
 ## Using it
 
@@ -43,14 +38,12 @@ It prints the real path and the app being run, then executes it:
  Executing:  bash
 ======================================================
 
-# some warnings related to the --new-session argument in Bubblewrap
-
 # app execution: runs a new bash shell where you can run anything the sandbox allows
 [sievebox] /path/to/your/current/shell/session$
 ```
 
 Anything after the binary name is passed straight to the app, so
-`sievebox node --help` shows *node's* help, not the sievebox's. Flags are
+`sievebox node --help` shows *node's* help, not sievebox's. Flags are
 only recognized **before** the binary name.
 
 ### Flags
@@ -69,8 +62,9 @@ only recognized **before** the binary name.
 
 - `--status <binary>`: show the resolved config for an app (modules, network
   decision, whether `$HERE` is mounted, bwrap arg count) **without running it**.
+- `--dry-run <binary>`: print the composed `bwrap` command without running it.
 - `--discover <binary>`: run the app under `strace` to find missing path
-  permissions (see below). Needs `strace` and `sievebox-discovery.sh`.
+  permissions (see below). Needs `strace`.
 - `-p, --prompt`: when a tool's optional bind directory is missing, offer to
   create it (also via `SIEVEBOX_PROMPT=true`). Default is to skip.
 - `-h, --help`: show the usage info.
@@ -92,69 +86,68 @@ Note: this isn't a catch-all. If a command is invoked through another (e.g. unde
 
 ## Extending the profiles and apps
 
-The easily-editable bits are commented with a `# **` prefix, grep for those.
-Almost everything lives in `sievebox-profiles.sh`.
+Almost everything lives in `sievebox-profiles.yaml`. The top-level sections are
+`core:`, `modules:`, and `apps:`.
 
 ### Add a module (a permission bundle)
 
-A module is registered with `register_module <name> <color> <env-script>
-<bwrap-args...>`:
+A module is a YAML mapping under `modules:` with a name, color, and capabilities:
 
-```bash
-register_module "mytool" "208" "" \
-  --bind-try "$HOME/.config/mytool" "$HOME/.config/mytool" \
-  --ro-bind-try "$HOME/.mytoolrc" "$HOME/.mytoolrc"
+```yaml
+modules:
+  mytool:
+    color: 208
+    filesystem:
+      rw: [~/.config/mytool]
+      ro: [~/.mytoolrc]
 ```
 
-- `<color>` is a 256-color code for the sandbox prompt (there's a snippet in the
-  file to preview colors).
-- `<env-script>` is an optional shell snippet fused into the sandbox launch (used
-  e.g. by the Conda module to auto-activate an env); leave it `""` if unused.
-- The rest are passed verbatim to `bwrap`. Use `--bind` / `--bind-try` for
-  read-write, `--ro-bind` / `--ro-bind-try` for read-only; the `-try` variants
-  are skipped silently when the source doesn't exist (so they're safe defaults).
+- `color` is a 256-color code for the sandbox prompt.
+- `filesystem.ro` / `filesystem.rw` are lists of paths (`~` and `$VAR` expanded,
+  existence-gated with `-try` by default).
+- `sockets`: named host sockets (`wayland`, `pulse`, `pipewire`).
+- `devices`: device names under `/dev` (e.g. `dri`).
+- `extends`: list of base modules to inherit binds from (pulled in first, deduped,
+  cycle-protected).
+- `setenv`: env var names to forward past `--clearenv`.
+- `shell_init`: an optional shell snippet fused into the sandbox launch (used
+  e.g. by the Conda module to auto-activate an env).
 
 ### Route an app to its modules
 
-Map a binary to a space-separated module list with `PROFILE_DEPS`, and
-(optionally) pick which module gives the prompt its color with
-`PROFILE_ROOT_MOD` (defaults to the first module in the list):
+Map a binary to a module list under `apps:`, and optionally pick which module
+gives the prompt its color with `root` (defaults to the first module):
 
-```bash
-PROFILE_DEPS["mytool"]="node webdev mytool"
-PROFILE_ROOT_MOD["mytool"]="mytool"
-```
-
-### Inheritance
-
-A module can inherit another's binds with `MODULE_EXTENDS`. Bases are pulled in
-first, deduped, with cycle protection, so listing the child is enough:
-
-```bash
-MODULE_EXTENDS["webdev"]="dev_base"   # webdev now also gets dev_base's binds
+```yaml
+apps:
+  mytool:
+    modules: [node, webdev, mytool]
+    root: mytool
+    network: true       # default: false
+    allow_home: true    # default: false
 ```
 
 ### Forward an env var past `--clearenv`
 
 The sandbox starts from an empty environment and only re-introduces an explicit
 allowlist (so host secrets like API tokens don't leak in). To let a module pass
-one of its own variables through, add it to `MODULE_SETENV`:
+one of its own variables through, add it to `setenv`:
 
-```bash
-MODULE_SETENV["node"]="PNPM_HOME"
+```yaml
+modules:
+  node:
+    setenv: [PNPM_HOME]
 ```
 
 The base allowlist (`HOME`, `PATH`, `TERM`, locale/display vars, …) lives in
-`CORE_SETENV` in the engine. **Never put secrets in either.**
+`core.setenv` in the YAML. **Never put secrets in either.**
 
 ### Host policy knobs
 
-Also in `sievebox-profiles.sh`:
-
-- `RUN_HOME_WHITELIST`: apps allowed to start directly in `$HOME` (regex
-  alternation; these also don't get `$HERE` bound). By default running from
-  `$HOME` is refused as a footgun.
-- `NET_BLACKLIST`: apps denied network access (regex alternation).
+Per-app in the YAML:
+- `allow_home: true`: allows the app to start directly in `$HOME` (also skips
+  binding `$HERE`). By default running from `$HOME` is refused as a footgun.
+- `network: true`: grants network access. Default is denied.
 
 ### A note on D-Bus / X11
 
@@ -202,9 +195,20 @@ has no conda module). Disable with `SIEVEBOX_AUTO_DETECT=false`.
 
 ### Tuning discovery
 
-All env-overridable (sensible defaults in `sievebox-discovery.sh`):
+All env-overridable (sensible defaults in `src/sievebox/discovery.py`):
 
 - `DISCOVERY_ERRNOS`: which failures count (default `ENOENT EACCES EROFS`).
 - `DISCOVERY_SYS_PATHS`, `DISCOVERY_CACHE_PATTERNS`, `DISCOVERY_DEPS_PATTERNS`:
   the classification rule table (system config / cache / deps).
 - `SIEVEBOX_DETECT_RULES`: the `marker|type|module` table for project detection.
+
+## Development
+
+```
+make test    # run the test suite
+make lint    # syntax-check Python files
+make clean   # remove caches
+```
+
+The bash engine is archived in `archive/`. It will not be updated from now on.
+The Python engine under `src/sievebox/` is the sole active engine.

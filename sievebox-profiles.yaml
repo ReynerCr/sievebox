@@ -1,0 +1,215 @@
+# sievebox profile registry. Loaded by the Python engine.
+#
+# Schema:
+#   modules: reusable permission bundles
+#     color       256-color code for the sandbox prompt
+#     extends     base modules to inherit (expanded base-first)
+#     setenv      host env vars to forward into the sandbox
+#     shell_init  raw bash run inside the sandbox at launch
+#     filesystem  ro / rw path lists; ~ and $VAR expanded, existence-gated,
+#                 entries with an unset $VAR are skipped
+#     sockets     named host sockets: wayland, pulse, pipewire
+#     devices     device names under /dev (e.g. dri)
+#   apps: binary -> { modules, root, network, allow_home, env }
+#     network    default false   (grant outbound network + cert dirs)
+#     allow_home default false   (permit running directly in $HOME)
+#     root       module driving the prompt color (default: first module)
+#     env        values set in the host env only if currently unset
+#   core: base sandbox applied to every app (args / setenv / network)
+
+policy: {}
+
+# Base sandbox applied to every app, in order. Each `args` entry is a bwrap
+# directive (token list); {bin} -> target binary, ~ -> $HOME. ADVANCED: this is
+# the security floor — edit with care.
+core:
+  args:
+    - [--unshare-all]
+    - [--unshare-user]
+    - [--disable-userns]
+    - [--hostname, "sievebox-{bin}"]
+    - [--die-with-parent]
+    - [--new-session]
+    - [--cap-drop, ALL]
+    - [--clearenv]
+    - [--tmpfs, /]
+    - [--dev, /dev]
+    - [--proc, /proc]
+    - [--tmpfs, /tmp]
+    - [--tmpfs, /run]
+    - [--ro-bind, /usr, /usr]
+    - [--symlink, usr/bin, /bin]
+    - [--symlink, usr/sbin, /sbin]
+    - [--symlink, usr/lib, /lib]
+    - [--symlink, usr/lib64, /lib64]
+    - [--ro-bind, /etc/alternatives, /etc/alternatives]
+    - [--ro-bind-try, /etc/fonts, /etc/fonts]
+    - [--ro-bind-try, /etc/hosts, /etc/hosts]
+    - [--ro-bind-try, /etc/host.conf, /etc/host.conf]
+    - [--ro-bind-try, /etc/nsswitch.conf, /etc/nsswitch.conf]
+    - [--ro-bind-try, /etc/group, /etc/group]
+    - [--ro-bind-try, /etc/passwd, /etc/passwd]
+    - [--ro-bind-try, /etc/localtime, /etc/localtime]
+    - [--tmpfs, /var/cache/fontconfig]
+    - [--ro-bind-try, "~/.cache/fontconfig", "~/.cache/fontconfig"]
+    - [--ro-bind-try, /etc/ld.so.conf.d, /etc/ld.so.conf.d]
+    - [--ro-bind-try, /etc/ld.so.cache, /etc/ld.so.cache]
+    - [--ro-bind-try, /etc/ld.so.conf, /etc/ld.so.conf]
+    - [--ro-bind-try, "~/.fonts", "~/.fonts"]
+    - [--ro-bind-try, "~/.config/fontconfig", "~/.config/fontconfig"]
+    - [--ro-bind-try, "~/.config/user-dirs.dirs", "~/.config/user-dirs.dirs"]
+    - [--ro-bind-try, "~/.local/share/icons", "~/.local/share/icons"]
+    - [--ro-bind-try, "~/.config/kdedefaults", "~/.config/kdedefaults"]
+    - [--ro-bind-try, "~/.config/kdeglobals", "~/.config/kdeglobals"]
+    - [--ro-bind-try, "~/.config/kwinrc", "~/.config/kwinrc"]
+    - [--ro-bind-try, "~/.local/share/plasma", "~/.local/share/plasma"]
+    - [--ro-bind-try, "~/.local/share/color-schemes/", "~/.local/share/color-schemes/"]
+    - [--ro-bind, /etc/profile, /etc/profile]
+    - [--ro-bind, /etc/profile.d, /etc/profile.d]
+    - [--ro-bind-try, "~/.config/gtk-3.0", "~/.config/gtk-3.0"]
+    - [--ro-bind-try, "~/.config/gtk-4.0", "~/.config/gtk-4.0"]
+    - [--ro-bind-try, "~/.config/gtkrc", "~/.config/gtkrc"]
+    - [--ro-bind-try, "~/.config/gtkrc-2.0", "~/.config/gtkrc-2.0"]
+  # Host env vars forwarded into the cleared sandbox (only if set).
+  setenv: [HOME, PATH, USER, LOGNAME, TERM, COLORTERM, LANG, LANGUAGE, LC_ALL, LC_CTYPE, XDG_RUNTIME_DIR, XDG_SESSION_TYPE]
+  # Appended when an app has `network: true`.
+  network:
+    - [--share-net]
+    - [--ro-bind-try, /etc/resolv.conf, /etc/resolv.conf]
+    - [--ro-bind-try, /etc/ssl, /etc/ssl]
+    - [--ro-bind-try, /etc/pki, /etc/pki]
+    - [--ro-bind-try, /etc/ca-certificates, /etc/ca-certificates]
+
+modules:
+
+  conda:
+    color: 184
+    setenv: [CONDA_ENV]
+    shell_init: |
+      export CONDA_EXE="/usr/bin/conda"
+      if [ "$0" = "conda" ]; then
+        [ -f /etc/profile.d/conda.sh ] && source /etc/profile.d/conda.sh
+        if [ "$#" -gt 1 ]; then
+          shift
+          conda "$@"
+        else
+          echo -n "Use '$(tput setaf 184)conda activate <env>$(tput sgr0)' to activate an environment."
+        fi
+        echo ""
+        exec bash --login -i
+      fi
+    filesystem:
+      ro: [/etc/conda]
+      rw: [~/.conda, ~/.cache/conda, ~/.cache/pip, ~/.condarc, ~/.ipython]
+
+  node:
+    color: 226
+    setenv: [PNPM_HOME]
+    filesystem:
+      ro: [~/.npmrc]
+      rw:
+        - $PNPM_HOME
+        - ~/.npm
+        - ~/.cache/pnpm
+        - ~/.cache/node
+        - ~/.config/pnpm
+        - ~/.bun
+        - ~/.node_repl_history
+
+  dev_base:
+    color: 2
+    filesystem:
+      rw: [~/.cargo]
+
+  webdev:
+    color: 2
+    extends: [dev_base]
+    filesystem:
+      rw:
+        - ~/.cache/ms-playwright
+        - ~/.cache/Cypress
+        - ~/.config/nextjs-nodejs
+        - ~/.config/create-next-app-nodejs
+
+  pi_agent:
+    color: 81
+    filesystem:
+      rw: [~/.pi, ~/AppInstalls/custom-scripts/dev/pi-agent]
+
+  opencode_agent:
+    color: 86
+    filesystem:
+      rw:
+        - ~/.opencode
+        - ~/.config/opencode
+        - ~/.local/share/opencode
+        - ~/.local/state/opencode
+        - ~/.local/share/opentui
+        - ~/.cache/opencode
+
+  llama_cpp:
+    color: 99
+    filesystem:
+      ro: [~/llamacpp/llama-cpp, ~/llama.ini]
+      rw: [~/.cache/llama.cpp, ~/.cache/huggingface]
+
+  gpu:
+    color: 1
+    devices: [dri]
+    filesystem:
+      ro:
+        - ~/.cache/mesa_shader_cache
+        - ~/.cache/radv_builtin_shaders
+        - /sys/dev
+        - /sys/devices
+        - /etc/vulkan
+
+  simple_module:
+    color: 183
+
+  rtk_ai:
+    color: 105
+    filesystem:
+      rw: [~/.local/bin/rtk]
+
+  devin_cli:
+    color: 105
+    filesystem:
+      rw:
+        - ~/.local/share/devin
+        - ~/.cache/devin
+        - ~/.config/devin
+        - ~/.local/bin/devin
+        - ~/.local/share/chisel
+        - ~/.local/share/cognition
+
+  specific_projects:
+    color: 3
+    filesystem:
+      rw: [~/.local/share/com.zenoread.app]
+
+  gui:
+    color: 45
+    sockets: [wayland]
+
+  audio:
+    color: 170
+    sockets: [pulse, pipewire]
+
+apps:
+  conda:    { modules: [conda, webdev, specific_projects, gui], network: true }
+  npm:      { modules: [node, webdev, gpu, specific_projects, gui], network: true }
+  pnpm:     { modules: [node, webdev, specific_projects, gui], network: true }
+  yarn:     { modules: [node, webdev, specific_projects, gui], network: true }
+  npx:      { modules: [node, webdev, specific_projects, gui], network: true }
+  node:     { modules: [node, webdev, specific_projects, gui], network: true }
+  bun:      { modules: [node, webdev, specific_projects, gui], network: true }
+  pi:       { modules: [conda, node, webdev, pi_agent, rtk_ai, specific_projects, gui], root: pi_agent, network: true, env: { CONDA_ENV: pdf } }
+  opencode: { modules: [conda, node, webdev, opencode_agent, rtk_ai, specific_projects, gui], root: opencode_agent, network: true }
+  llama:          { modules: [llama_cpp, gpu], network: true, allow_home: true }
+  llama-server:   { modules: [llama_cpp, gpu], network: true, allow_home: true }
+  llama-bench:    { modules: [llama_cpp, gpu], network: true, allow_home: true }
+  llama-quantize: { modules: [llama_cpp, gpu], network: true, allow_home: true }
+  bash:     { modules: [simple_module], network: true }
+  rtk:      { modules: [rtk_ai, gui], network: true }
+  devin:    { modules: [conda, node, webdev, devin_cli, rtk_ai, specific_projects, gui], root: devin_cli, network: true }

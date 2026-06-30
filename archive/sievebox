@@ -157,6 +157,7 @@ while [ "$#" -gt 0 ]; do
     -l|--list)   MODE="list"; shift; break ;;
     --status)    set_primary_mode status;   shift ;;
     --discover)  set_primary_mode discover; shift ;;
+    --dry-run)   set_primary_mode dryrun;   shift ;;
     -p|--prompt) PROMPT="true"; shift ;;
     --)          shift; break ;;
     -*)          echo "Error: unknown option '$1'." >&2; print_usage >&2; exit 1 ;;
@@ -164,8 +165,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# Silence host-side runtime banners in (read-only) status mode.
-notify() { [ "$MODE" = "status" ] || echo -e "$@"; }
+# Silence host-side runtime banners in (read-only) status/dry-run mode.
+notify() { { [ "$MODE" = "status" ] || [ "$MODE" = "dryrun" ]; } || echo -e "$@"; }
 
 HERE="$(realpath "$PWD")"
 TARGET_BIN=""
@@ -562,17 +563,41 @@ fi
 BRIGHT_YELLOW=226
 BRIGHT_WHITE=231
 
+# The argument vector that follows `bwrap` for BOTH a normal run and discovery.
+SIEVEBOX_INVOCATION=(
+  "${FINAL_BWRAP_ARGS[@]}" --remount-ro "/" bash -c "$EXEC_CMD" "$TARGET_BIN" "$@"
+)
+
+# ==============================================================================
+# DRY-RUN: print the composed bwrap command, one directive per line
+# ==============================================================================
+if [ "$MODE" = "dryrun" ]; then
+  _groups=()
+  _cur=""
+  for _t in "${SIEVEBOX_INVOCATION[@]}"; do
+    case "$_t" in
+      --*)
+        [ -n "$_cur" ] && _groups+=("$_cur")
+        _cur="$_t" ;;
+      *)
+        _cur="$_cur $_t" ;;
+    esac
+  done
+  [ -n "$_cur" ] && _groups+=("$_cur")
+  printf 'bwrap %s' "${_groups[0]}"
+  for _g in "${_groups[@]:1}"; do
+    printf ' \\\n  %s' "$_g"
+  done
+  printf '\n'
+  exit 0
+fi
+
 echo "$($OUTPUT_COLOR $BRIGHT_YELLOW)======================================================"
 echo "$($OUTPUT_COLOR $BRIGHT_WHITE) Entering Sandboxed Container Engine"
 echo " Host Path:  $($OUTPUT_COLOR $COLOR_PATH)$SIEVEBOX_PATH$($RESET_COLOR)"
 echo "$($OUTPUT_COLOR $BRIGHT_WHITE) Executing:  $($OUTPUT_COLOR $RESOLVED_COLOR)$TARGET_BIN$($RESET_COLOR)"
 echo "$($OUTPUT_COLOR $BRIGHT_YELLOW)======================================================$($RESET_COLOR)"
 echo -e "\n"
-
-# The argument vector that follows `bwrap` for BOTH a normal run and discovery.
-SIEVEBOX_INVOCATION=(
-  "${FINAL_BWRAP_ARGS[@]}" --remount-ro "/" bash -c "$EXEC_CMD" "$TARGET_BIN" "$@"
-)
 
 # Discovery mode: run the EXACT same sandbox under strace to surface missing path
 # permissions. Implemented in the optional sievebox-discovery.sh, sourced only here

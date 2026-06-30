@@ -1,0 +1,22 @@
+1234  execve("/usr/bin/node", ["node", "app.js"], ...) = 0
+1234  openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+1234  openat(AT_FDCWD, "/etc/ld.so.conf.d/foo.conf", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/etc/passwd", O_RDONLY) = -1 EACCES (Permission denied)
+1234  openat(AT_FDCWD, "/etc/group", O_RDONLY) = -1 EACCES (Permission denied)
+1234  openat(AT_FDCWD, "/tmp/node-compile-cache/abc", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  mkdirat(AT_FDCWD, "/home/user/.cache/myapp", 0755) = -1 EROFS (Read-only file system)
+1234  openat(AT_FDCWD, "/home/user/.cache/myapp/data.json", O_WRONLY|O_CREAT, 0644) = -1 EROFS (Read-only file system)
+1234  openat(AT_FDCWD, "/home/user/project/node_modules/express/index.js", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/home/user/project/node_modules/react/index.js", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/home/user/.config/app/settings.json", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/home/user/project/.env", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/home/user/project/.env.local", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/home/user/.env", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/home/user/.env.local", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/usr/local/bin/helper", O_RDONLY) = -1 ENOENT (No such file or directory)
+1234  openat(AT_FDCWD, "/home/user/project/config.json", O_RDONLY) = -1 ENOENT (No such file or directory)
+1235  openat(AT_FDCWD, "/home/user/project/config.json", O_RDONLY <unfinished ...>
+1234  openat(AT_FDCWD, "/etc/localtime", O_RDONLY) = -1 EACCES (Permission denied)
+1235  <... openat resumed> = 3
+1234  openat(AT_FDCWD, "/home/user/.config/app/settings.json", O_RDONLY) = 3
+1234  +++ exited with 1 +++

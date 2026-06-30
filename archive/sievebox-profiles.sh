@@ -128,7 +128,7 @@ register_module "opencode_agent" "86" "" \
 register_module "llama_cpp" "99" "" \
   --ro-bind-try "$HOME/llamacpp/llama-cpp" "$HOME/llamacpp/llama-cpp" \
   --ro-bind-try "$HOME/llama.ini" "$HOME/llama.ini" \
-  --bind-try "$HOME/.cache/llama.cpp/" "$HOME/.cache/llama.cpp/" \
+  --bind-try "$HOME/.cache/llama.cpp" "$HOME/.cache/llama.cpp" \
   --bind-try "$HOME/.cache/huggingface" "$HOME/.cache/huggingface"
 
 register_module "gpu" "1" "" \
