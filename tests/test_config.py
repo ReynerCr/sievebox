@@ -24,14 +24,13 @@ def _base_yaml() -> dict:
     return {
         "modules": {
             "node": {
-                "color": "226",
                 "setenv": ["PNPM_HOME"],
                 "filesystem": {"ro": ["~/.npmrc"], "rw": ["~/.npm", "~/.cache/pnpm"]},
             },
             "gui": {"sockets": ["wayland"]},
         },
         "apps": {
-            "npm": {"modules": ["node"], "network": True, "env": {"FOO": "bar"}},
+            "npm": {"modules": ["node"], "color": "226", "network": True, "env": {"FOO": "bar"}},
         },
     }
 
@@ -50,17 +49,16 @@ def test_deep_merge_module_adds_filesystem_paths(tmp_path):
     assert m.fs_rw == ["~/.npm", "~/.cache/pnpm", "~/.custom-node"]
     assert m.fs_ro == ["~/.npmrc"]
     assert m.setenv == ["PNPM_HOME"]
-    assert m.color == "226"
 
 
-def test_deep_merge_module_changes_color(tmp_path):
+def test_deep_merge_app_changes_color(tmp_path):
     base = _write(tmp_path / "base.yaml", _base_yaml())
     dropin = _write(tmp_path / "drop.yaml", {
-        "modules": {"node": {"color": "999"}},
+        "apps": {"npm": {"color": "999"}},
     })
     cfg = load_config([base, dropin])
-    assert cfg.modules["node"].color == "999"
-    assert cfg.modules["node"].setenv == ["PNPM_HOME"]
+    assert cfg.apps["npm"].color == "999"
+    assert cfg.apps["npm"].network is True
 
 
 def test_deep_merge_module_dedup(tmp_path):
@@ -101,14 +99,12 @@ def test_override_mode_replaces_module_entirely(tmp_path):
         "modules": {
             "node": {
                 "merge": "override",
-                "color": "999",
                 "filesystem": {"rw": ["~/.custom-node"]},
             }
         },
     })
     cfg = load_config([base, dropin])
     m = cfg.modules["node"]
-    assert m.color == "999"
     assert m.setenv == []
     assert m.fs_ro == []
     assert m.fs_rw == ["~/.custom-node"]
@@ -118,19 +114,20 @@ def test_override_mode_replaces_app_entirely(tmp_path):
     base = _write(tmp_path / "base.yaml", _base_yaml())
     dropin = _write(tmp_path / "drop.yaml", {
         "apps": {
-            "npm": {"merge": "override", "modules": ["gui"], "network": False},
+            "npm": {"merge": "override", "modules": ["gui"], "color": "100", "network": False},
         },
     })
     cfg = load_config([base, dropin])
     a = cfg.apps["npm"]
     assert a.modules == ["gui"]
+    assert a.color == "100"
     assert a.network is False
     assert a.env == {}
 
 
 # --- default color ---
 
-def test_default_color_when_module_has_no_color(tmp_path):
+def test_default_color_when_app_has_no_color(tmp_path):
     base = _write(tmp_path / "base.yaml", {
         "modules": {"gui": {"sockets": ["wayland"]}},
         "apps": {"testapp": {"modules": ["gui"], "network": True}},
@@ -140,7 +137,7 @@ def test_default_color_when_module_has_no_color(tmp_path):
     assert comp.color == DEFAULT_COLOR
 
 
-def test_default_color_not_used_when_color_set(tmp_path):
+def test_app_color_overrides_default(tmp_path):
     base = _write(tmp_path / "base.yaml", _base_yaml())
     cfg = load_config([base])
     comp = compose(cfg, "npm", here="/tmp", home="/home/user")
@@ -152,7 +149,7 @@ def test_default_color_not_used_when_color_set(tmp_path):
 def test_invalid_merge_mode_raises(tmp_path):
     base = _write(tmp_path / "base.yaml", _base_yaml())
     dropin = _write(tmp_path / "drop.yaml", {
-        "modules": {"node": {"merge": "bogus", "color": "1"}},
+        "modules": {"node": {"merge": "bogus", "setenv": ["X"]}},
     })
     with pytest.raises(ConfigError, match="invalid merge mode"):
         load_config([base, dropin])
@@ -162,6 +159,15 @@ def test_unknown_module_key_raises(tmp_path):
     base = _write(tmp_path / "base.yaml", _base_yaml())
     dropin = _write(tmp_path / "drop.yaml", {
         "modules": {"node": {"merge": "override", "ro": ["~/data"]}},
+    })
+    with pytest.raises(ConfigError, match="unknown key"):
+        load_config([base, dropin])
+
+
+def test_color_on_module_rejected(tmp_path):
+    base = _write(tmp_path / "base.yaml", _base_yaml())
+    dropin = _write(tmp_path / "drop.yaml", {
+        "modules": {"node": {"color": "100"}},
     })
     with pytest.raises(ConfigError, match="unknown key"):
         load_config([base, dropin])

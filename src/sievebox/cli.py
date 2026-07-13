@@ -129,8 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         _err("bubblewrap ('bwrap') not found on PATH; install it to run sandboxes.")
         return 1
 
-    conda_color = cfg.modules["conda"].color if "conda" in cfg.modules else "2"
-    script = exec_mod.build_exec_cmd(comp.color, comp.shell_inits, conda_color)
+    script = exec_mod.build_exec_cmd(comp.color, comp.shell_inits)
     # arg0 = target basename (drives the conda check); the full positional
     # (binary as typed + its args) becomes "$@", which the script exec's.
     invocation = comp.bwrap_args + ["--remount-ro", "/", "bash", "-c", script, target, *positional]

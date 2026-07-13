@@ -2,7 +2,6 @@
 #
 # Schema:
 #   modules: reusable permission bundles
-#     color       256-color code for the sandbox prompt (optional; defaults to 39)
 #     extends     base modules to inherit (expanded base-first)
 #     setenv      host env vars to forward into the sandbox
 #     shell_init  raw bash run inside the sandbox at launch
@@ -10,7 +9,8 @@
 #                 entries with an unset $VAR are skipped
 #     sockets     named host sockets: wayland, pulse, pipewire
 #     devices     device names under /dev (e.g. dri)
-#   apps: binary -> { modules, root, network, allow_home, env }
+#   apps: binary -> { modules, root, color, network, allow_home, env }
+#     color       256-color code for the sandbox prompt (optional; defaults to 39)
 #     network    default false   (grant outbound network + cert dirs)
 #     allow_home default false   (permit running directly in $HOME)
 #     root       module driving the prompt color (default: first module)
@@ -85,7 +85,6 @@ core:
 modules:
 
   simple_module:
-    color: 183
 
   gui:
     sockets: [wayland]
@@ -105,7 +104,6 @@ modules:
         - /etc/vulkan
 
   conda:
-    color: 184
     setenv: [CONDA_ENV]
     shell_init: |
       export CONDA_EXE="/usr/bin/conda"
@@ -115,10 +113,15 @@ modules:
           shift
           conda "$@"
         else
-          echo -n "Use '$(tput setaf 184)conda activate <env>$(tput sgr0)' to activate an environment."
+          printf "Use '\033[38;5;${SIEVEBOX_COLOR}mconda activate <env>\033[0m' to activate an environment."
         fi
         echo ""
         exec bash --login -i
+      fi
+      if [ -n "${CONDA_ENV:-}" ] && [ -f /etc/profile.d/conda.sh ]; then
+        source /etc/profile.d/conda.sh
+        conda activate "$CONDA_ENV"
+        printf "\033[38;5;${SIEVEBOX_COLOR}m[sievebox]\033[0m Attached to Conda environment: %s\n" "$CONDA_DEFAULT_ENV"
       fi
     filesystem:
       ro: [/etc/conda]
@@ -126,7 +129,6 @@ modules:
 
   # focused on node installs with pnpm
   node:
-    color: 226
     setenv: [PNPM_HOME]
     filesystem:
       ro: [~/.npmrc]
@@ -144,11 +146,11 @@ modules:
       rw: [~/.cargo]
 
 apps:
-  conda:    { modules: [conda], network: true }
-  npm:      { modules: [node], network: true }
-  pnpm:     { modules: [node], network: true }
-  yarn:     { modules: [node], network: true }
-  npx:      { modules: [node], network: true }
-  node:     { modules: [node], network: true }
-  bun:      { modules: [node], network: true }
-  bash:     { modules: [simple_module], network: true }
+  conda:    { modules: [conda], color: 184, network: true }
+  npm:      { modules: [node], color: 226, network: true }
+  pnpm:     { modules: [node], color: 226, network: true }
+  yarn:     { modules: [node], color: 226, network: true }
+  npx:      { modules: [node], color: 226, network: true }
+  node:     { modules: [node], color: 226, network: true }
+  bun:      { modules: [node], color: 226, network: true }
+  bash:     { modules: [simple_module], color: 183, network: true }
