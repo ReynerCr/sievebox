@@ -113,7 +113,7 @@ modules:
           shift
           conda "$@"
         else
-          echo -n "Use '$(tput setaf $SIEVEBOX_COLOR)conda activate <env>$(tput sgr0)' to activate an environment."
+          printf "Use '\033[38;5;${SIEVEBOX_COLOR}mconda activate <env>\033[0m' to activate an environment."
         fi
         echo ""
         exec bash --login -i
@@ -121,7 +121,7 @@ modules:
       if [ -n "${CONDA_ENV:-}" ] && [ -f /etc/profile.d/conda.sh ]; then
         source /etc/profile.d/conda.sh
         conda activate "$CONDA_ENV"
-        echo "\033[38;5;${SIEVEBOX_COLOR}m[sievebox]\033[0m Attached to Conda environment: $CONDA_DEFAULT_ENV"
+        printf "\033[38;5;${SIEVEBOX_COLOR}m[sievebox]\033[0m Attached to Conda environment: %s\n" "$CONDA_DEFAULT_ENV"
       fi
     filesystem:
       ro: [/etc/conda]
