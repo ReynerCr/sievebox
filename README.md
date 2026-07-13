@@ -6,20 +6,50 @@ theming, display, …) plus **per-tool permission bundles** ("modules"), combine
 the ones a given app needs, and launches the app in a fresh sandbox with some
 shiny prompts and indicators.
 
-It ships with profiles for Conda, Node (npm, pnpm, yarn, bun, node, npx; all
-sharing one Node module), Llama.cpp, OpenCode, Pi Agent and Devin (CLI), among others.
+It ships with base profiles for Conda, Node (npm, pnpm, yarn, bun, node, npx),
+Rust, and a generic shell. Personal profiles (agents, specific tools) are added
+via drop-in files (see below).
 
 ## The files
 
 - **`bin/sievebox`**: thin entry point on `$PATH`. Delegates to the Python
   package under `src/sievebox/`.
 - **`src/sievebox/`**: the engine (CLI, config loader, composer, discovery).
-- **`sievebox-profiles.yaml`**: the configuration (data). All the modules,
-  per-app routing, and host policy knobs. **This is the file that needs edits to add new profiles.**
+- **`sievebox-profiles.yaml`**: the base configuration (data). All the shipped
+  modules, per-app routing, and host policy knobs. **This is the file that needs
+  edits to add new base profiles.**
 
-The config is loaded from the first that exists: `$SIEVEBOX_CONFIG`, then
-`sievebox-profiles.yaml` next to the repo root, then
-`${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.yaml`.
+## Config loading
+
+Profiles are loaded from multiple files, merged in this order:
+
+1. **Base**: `sievebox-profiles.yaml` next to the repo root (or
+   `${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.yaml` if not found there).
+2. **Drop-ins**: `~/.config/sievebox/profiles.d/*.yaml`, sorted alphabetically.
+3. **`$SIEVEBOX_CONFIG`**: if set, applied last as a final override.
+
+This lets you keep personal profiles separate from the shipped base. Put your
+own modules and app overrides in `~/.config/sievebox/profiles.d/personal.yaml`.
+
+### Merge semantics
+
+When a drop-in defines a module or app that already exists in the base, the
+entries are merged. The default is **deep-merge**: scalars (color, network, …)
+are later-wins, lists (filesystem paths, modules, setenv, …) are appended with
+dedup, and dicts (env) are merged per-key.
+
+To replace a base entry entirely, set `merge: override`:
+
+```yaml
+modules:
+  node:
+    merge: override
+    color: 999
+    filesystem:
+      rw: [~/.custom-node]
+```
+
+`core:` is first-wins; the security floor cannot be relaxed from a drop-in.
 
 ## Using it
 
@@ -55,8 +85,8 @@ only recognized **before** the binary name.
   ```bash
   $ sievebox --list npm
   Modules for 'npm':
-    Declared:   node webdev gpu specific_projects
-    Effective:  node dev_base webdev gpu specific_projects   (inheritance-expanded)
+    Declared:   node
+    Effective:  node   (inheritance-expanded)
     Root:       node
   ```
 
@@ -86,8 +116,9 @@ Note: this isn't a catch-all. If a command is invoked through another (e.g. unde
 
 ## Extending the profiles and apps
 
-Almost everything lives in `sievebox-profiles.yaml`. The top-level sections are
-`core:`, `modules:`, and `apps:`.
+The base config lives in `sievebox-profiles.yaml`. Personal modules and app
+overrides go in `~/.config/sievebox/profiles.d/*.yaml`. The top-level sections
+in any profile file are `core:`, `modules:`, and `apps:`.
 
 ### Add a module (a permission bundle)
 
@@ -102,7 +133,8 @@ modules:
       ro: [~/.mytoolrc]
 ```
 
-- `color` is a 256-color code for the sandbox prompt.
+- `color` is an optional 256-color code for the sandbox prompt. Defaults to the
+  engine color (bright cyan, code 39) if omitted.
 - `filesystem.ro` / `filesystem.rw` are lists of paths (`~` and `$VAR` expanded,
   existence-gated with `-try` by default).
 - `sockets`: named host sockets (`wayland`, `pulse`, `pipewire`).
@@ -210,5 +242,5 @@ make lint    # syntax-check Python files
 make clean   # remove caches
 ```
 
-The bash engine is archived in `archive/`. It will not be updated from now on.
-The Python engine under `src/sievebox/` is the sole active engine.
+The bash engine is archived in `archive/`. The Python engine under
+`src/sievebox/` is the sole active engine.
