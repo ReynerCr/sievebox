@@ -140,7 +140,9 @@ modules:
   cycle-protected).
 - `setenv`: env var names to forward past `--clearenv`.
 - `shell_init`: an optional shell snippet fused into the sandbox launch (used
-  e.g. by the Conda module to auto-activate an env).
+  e.g. by the Conda module to auto-activate an env). The app's color is
+  available as `$SIEVEBOX_COLOR` (a 256-color code) for use in `tput` or ANSI
+  escapes.
 
 ### Route an app to its modules
 

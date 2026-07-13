@@ -64,6 +64,9 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         if val:
             args += ["--setenv", name, val]
 
+    color = app.color or DEFAULT_COLOR
+    args += ["--setenv", "SIEVEBOX_COLOR", color]
+
     if app.network:
         args += _flatten(cfg.core.network, app_name, home)
 
@@ -77,7 +80,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         effective_modules=eff,
         declared_modules=app.modules,
         root=root,
-        color=app.color or DEFAULT_COLOR,
+        color=color,
         network=app.network,
         here=here,
         here_mounted=here_mounted,
