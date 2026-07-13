@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 
 from . import capabilities
-from .config import Config, flatten_modules
+from .config import Config, DEFAULT_COLOR, flatten_modules
 
 
 def _expand_token(tok: str, target_bin: str, home: str) -> str:
@@ -77,7 +77,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         effective_modules=eff,
         declared_modules=app.modules,
         root=root,
-        color=cfg.modules[root].color if root in cfg.modules else "",
+        color=(cfg.modules[root].color if root in cfg.modules and cfg.modules[root].color else DEFAULT_COLOR),
         network=app.network,
         here=here,
         here_mounted=here_mounted,

@@ -10,9 +10,28 @@ import yaml
 
 DEFAULT_CONFIG_NAME = "sievebox-profiles.yaml"
 
+# Engine default prompt color (256-color code 39 = bright cyan).
+DEFAULT_COLOR = "39"
+
 # Known capability names (mirrored from capabilities.py).
 KNOWN_SOCKETS = {"wayland", "pulse", "pipewire"}
 KNOWN_DEVICES = {"dri", "snd", "video", "input", "tty", "console"}
+
+# Module fields that are lists (append+dedup on deep-merge).
+_MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices")
+# Module fields that are scalars (later-wins on deep-merge).
+_MODULE_SCALAR_FIELDS = ("color", "shell_init")
+# All valid keys on a module entry (after merge is stripped).
+_MODULE_KEYS = {"color", "extends", "setenv", "shell_init", "filesystem", "sockets", "devices"}
+
+# App fields that are lists (append+dedup on deep-merge).
+_APP_LIST_FIELDS = ("modules",)
+# App fields that are scalars (later-wins on deep-merge).
+_APP_SCALAR_FIELDS = ("root", "network", "allow_home")
+# All valid keys on an app entry (after merge is stripped).
+_APP_KEYS = {"modules", "root", "network", "allow_home", "env"}
+
+VALID_MERGE_MODES = {"deep", "override"}
 
 
 class ConfigError(Exception):
@@ -113,18 +132,110 @@ def _as_list(value) -> list:
     return value if isinstance(value, list) else [value]
 
 
+def _dedup_append(base_list: list, extra: list) -> list:
+    """Append items from extra to base_list, skipping duplicates. Order: base first."""
+    result = list(base_list)
+    seen = set(base_list)
+    for item in extra:
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
+
+
+def _deep_merge_entry(base_entry: dict, overlay_entry: dict,
+                      list_fields: tuple, scalar_fields: tuple) -> dict:
+    """Deep-merge a single module or app entry.
+
+    Scalars: later-wins. Lists: append+dedup. Dicts (filesystem, env): per-key
+    merge. Unknown keys: later-wins (passthrough).
+    """
+    result = dict(base_entry)
+    for key, value in overlay_entry.items():
+        if key in scalar_fields:
+            result[key] = value
+        elif key in list_fields:
+            result[key] = _dedup_append(result.get(key, []), value)
+        elif key == "filesystem":
+            base_fs = dict(result.get(key) or {})
+            for subkey, subval in (value or {}).items():
+                if subkey in ("ro", "rw"):
+                    base_fs[subkey] = _dedup_append(base_fs.get(subkey, []), subval)
+                else:
+                    base_fs[subkey] = subval
+            result[key] = base_fs
+        elif key == "env":
+            base_env = dict(result.get(key) or {})
+            base_env.update(value or {})
+            result[key] = base_env
+        else:
+            result[key] = value
+    return result
+
+
+def _merge_section(base_section: dict, overlay_section: dict,
+                   list_fields: tuple, scalar_fields: tuple) -> dict:
+    """Merge a section (modules/apps). Per-entry: deep-merge or override."""
+    result = dict(base_section)
+    for name, entry in overlay_section.items():
+        entry = entry or {}
+        mode = entry.get("merge", "deep")
+        if mode not in VALID_MERGE_MODES:
+            raise ConfigError(
+                f"invalid merge mode '{mode}' for entry '{name}' "
+                f"(valid: {', '.join(sorted(VALID_MERGE_MODES))})"
+            )
+        entry = {k: v for k, v in entry.items() if k != "merge"}
+        if mode == "override" or name not in result:
+            result[name] = entry
+        else:
+            result[name] = _deep_merge_entry(result[name], entry, list_fields, scalar_fields)
+    return result
+
+
 def _merge_raw(base: dict, overlay: dict) -> dict:
-    """Merge overlay into base. Dict keys replace same-named entries entirely.
-    `core` is first-wins (only set from the first file that has it)."""
+    """Merge overlay into base.
+
+    modules/apps: per-entry deep-merge (default) or override (merge: override).
+    policy: dict-merge per key (replace).
+    core: first-wins (only set from the first file that has it).
+    """
     result = dict(base)
-    for key in ("modules", "apps", "policy"):
-        if key in overlay:
-            existing = dict(result.get(key) or {})
-            existing.update(overlay[key])
-            result[key] = existing
+    if "modules" in overlay:
+        result["modules"] = _merge_section(
+            result.get("modules") or {}, overlay["modules"],
+            _MODULE_LIST_FIELDS, _MODULE_SCALAR_FIELDS,
+        )
+    if "apps" in overlay:
+        result["apps"] = _merge_section(
+            result.get("apps") or {}, overlay["apps"],
+            _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
+        )
+    if "policy" in overlay:
+        existing = dict(result.get("policy") or {})
+        existing.update(overlay["policy"])
+        result["policy"] = existing
     if "core" not in result and "core" in overlay:
         result["core"] = overlay["core"]
     return result
+
+
+def _check_unknown_keys(merged: dict, paths: list[Path]) -> None:
+    """Reject unknown keys on module and app entries."""
+    errs: list[str] = []
+    for name, spec in (merged.get("modules") or {}).items():
+        spec = spec or {}
+        unknown = set(spec.keys()) - _MODULE_KEYS
+        if unknown:
+            errs.append(f"module '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
+    for name, spec in (merged.get("apps") or {}).items():
+        spec = spec or {}
+        unknown = set(spec.keys()) - _APP_KEYS
+        if unknown:
+            errs.append(f"app '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
+    if errs:
+        files = ", ".join(str(p) for p in paths)
+        raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
 
 
 def load_config(paths: list[Path]) -> Config:
@@ -139,6 +250,8 @@ def load_config(paths: list[Path]) -> Config:
         merged = _merge_raw(merged, raw)
 
     cfg = Config(paths=paths, policy=merged.get("policy") or {})
+
+    _check_unknown_keys(merged, paths)
 
     core_raw = merged.get("core") or {}
     cfg.core = Core(
