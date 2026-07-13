@@ -2,7 +2,7 @@
 #
 # Schema:
 #   modules: reusable permission bundles
-#     color       256-color code for the sandbox prompt
+#     color       256-color code for the sandbox prompt (optional; defaults to 39)
 #     extends     base modules to inherit (expanded base-first)
 #     setenv      host env vars to forward into the sandbox
 #     shell_init  raw bash run inside the sandbox at launch
@@ -16,6 +16,8 @@
 #     root       module driving the prompt color (default: first module)
 #     env        values set in the host env only if currently unset
 #   core: base sandbox applied to every app (args / setenv / network)
+#
+# Personal modules and app overrides live in ~/.config/sievebox/profiles.d/*.yaml
 
 policy: {}
 
@@ -82,6 +84,26 @@ core:
 
 modules:
 
+  simple_module:
+    color: 183
+
+  gui:
+    sockets: [wayland]
+
+  audio:
+    sockets: [pulse, pipewire]
+
+  # mesa focused on amdgpu
+  gpu:
+    devices: [dri]
+    filesystem:
+      ro:
+        - ~/.cache/mesa_shader_cache
+        - ~/.cache/radv_builtin_shaders
+        - /sys/dev
+        - /sys/devices
+        - /etc/vulkan
+
   conda:
     color: 184
     setenv: [CONDA_ENV]
@@ -102,6 +124,7 @@ modules:
       ro: [/etc/conda]
       rw: [~/.conda, ~/.cache/conda, ~/.cache/pip, ~/.condarc, ~/.ipython]
 
+  # focused on node installs with pnpm
   node:
     color: 226
     setenv: [PNPM_HOME]
@@ -116,100 +139,16 @@ modules:
         - ~/.bun
         - ~/.node_repl_history
 
-  dev_base:
-    color: 2
+  rust:
     filesystem:
       rw: [~/.cargo]
 
-  webdev:
-    color: 2
-    extends: [dev_base]
-    filesystem:
-      rw:
-        - ~/.cache/ms-playwright
-        - ~/.cache/Cypress
-        - ~/.config/nextjs-nodejs
-        - ~/.config/create-next-app-nodejs
-
-  pi_agent:
-    color: 81
-    filesystem:
-      rw: [~/.pi, ~/AppInstalls/custom-scripts/dev/pi-agent]
-
-  opencode_agent:
-    color: 86
-    filesystem:
-      rw:
-        - ~/.opencode
-        - ~/.config/opencode
-        - ~/.local/share/opencode
-        - ~/.local/state/opencode
-        - ~/.local/share/opentui
-        - ~/.cache/opencode
-
-  llama_cpp:
-    color: 99
-    filesystem:
-      ro: [~/llamacpp/llama-cpp, ~/llama.ini]
-      rw: [~/.cache/llama.cpp, ~/.cache/huggingface]
-
-  gpu:
-    color: 1
-    devices: [dri]
-    filesystem:
-      ro:
-        - ~/.cache/mesa_shader_cache
-        - ~/.cache/radv_builtin_shaders
-        - /sys/dev
-        - /sys/devices
-        - /etc/vulkan
-
-  simple_module:
-    color: 183
-
-  rtk_ai:
-    color: 105
-    filesystem:
-      rw: [~/.local/bin/rtk]
-
-  devin_cli:
-    color: 105
-    filesystem:
-      rw:
-        - ~/.local/share/devin
-        - ~/.cache/devin
-        - ~/.config/devin
-        - ~/.local/bin/devin
-        - ~/.local/share/chisel
-        - ~/.local/share/cognition
-
-  specific_projects:
-    color: 3
-    filesystem:
-      rw: [~/.local/share/com.zenoread.app]
-
-  gui:
-    color: 45
-    sockets: [wayland]
-
-  audio:
-    color: 170
-    sockets: [pulse, pipewire]
-
 apps:
-  conda:    { modules: [conda, webdev, specific_projects, gui], network: true }
-  npm:      { modules: [node, webdev, gpu, specific_projects, gui], network: true }
-  pnpm:     { modules: [node, webdev, specific_projects, gui], network: true }
-  yarn:     { modules: [node, webdev, specific_projects, gui], network: true }
-  npx:      { modules: [node, webdev, specific_projects, gui], network: true }
-  node:     { modules: [node, webdev, specific_projects, gui], network: true }
-  bun:      { modules: [node, webdev, specific_projects, gui], network: true }
-  pi:       { modules: [conda, node, webdev, pi_agent, rtk_ai, specific_projects, gui], root: pi_agent, network: true, env: { CONDA_ENV: pdf } }
-  opencode: { modules: [conda, node, webdev, opencode_agent, rtk_ai, specific_projects, gui], root: opencode_agent, network: true }
-  llama:          { modules: [llama_cpp, gpu], network: true, allow_home: true }
-  llama-server:   { modules: [llama_cpp, gpu], network: true, allow_home: true }
-  llama-bench:    { modules: [llama_cpp, gpu], network: true, allow_home: true }
-  llama-quantize: { modules: [llama_cpp, gpu], network: true, allow_home: true }
+  conda:    { modules: [conda], network: true }
+  npm:      { modules: [node], network: true }
+  pnpm:     { modules: [node], network: true }
+  yarn:     { modules: [node], network: true }
+  npx:      { modules: [node], network: true }
+  node:     { modules: [node], network: true }
+  bun:      { modules: [node], network: true }
   bash:     { modules: [simple_module], network: true }
-  rtk:      { modules: [rtk_ai, gui], network: true }
-  devin:    { modules: [conda, node, webdev, devin_cli, rtk_ai, specific_projects, gui], root: devin_cli, network: true }
