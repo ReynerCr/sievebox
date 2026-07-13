@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
-from .config import ConfigError, find_config, load_config
+from .config import ConfigError, find_config_files, load_config
 
 USAGE = """\
 Usage: sievebox [options] <binary> [args...]
@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         i += 1
 
     try:
-        cfg = load_config(find_config(_config_search_dir()))
+        cfg = load_config(find_config_files(_config_search_dir()))
     except ConfigError as e:
         _err(str(e))
         return 1
@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return discovery_mod.run_discovery(
             cfg, target, invocation, here, home, state_dir,
-            str(cfg.path), comp.effective_modules,
+            ", ".join(str(p) for p in cfg.paths), comp.effective_modules,
         )
 
     if prompt:
@@ -227,7 +227,7 @@ def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
 
 def _handle_status(cfg, target: str, comp) -> int:
     print(f"Sievebox status for: {target}")
-    print(f"  Config file:        {cfg.path}")
+    print(f"  Config files:       {', '.join(str(p) for p in cfg.paths)}")
     print(f"  Declared modules:   {' '.join(comp.declared_modules)}")
     print(f"  Effective modules:  {' '.join(comp.effective_modules)}")
     print(f"  Root (identity):    {comp.root} (color {comp.color})")
