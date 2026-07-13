@@ -10,10 +10,10 @@ def _ansi(color: str) -> str:
 RESET = "\\033[0m"
 
 
-def build_exec_cmd(color: str, shell_inits: list[str], conda_color: str = "2") -> str:
+def build_exec_cmd(color: str, shell_inits: list[str], conda_color: str = "184") -> str:
     """Build the in-sandbox launch script.
 
-    color        prompt color of the root module
+    color        prompt color of the app
     shell_inits  per-module shell snippets, in effective order
     conda_color  color used in the conda-attach line
     """

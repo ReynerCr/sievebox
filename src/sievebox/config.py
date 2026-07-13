@@ -20,16 +20,16 @@ KNOWN_DEVICES = {"dri", "snd", "video", "input", "tty", "console"}
 # Module fields that are lists (append+dedup on deep-merge).
 _MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices")
 # Module fields that are scalars (later-wins on deep-merge).
-_MODULE_SCALAR_FIELDS = ("color", "shell_init")
+_MODULE_SCALAR_FIELDS = ("shell_init",)
 # All valid keys on a module entry (after merge is stripped).
-_MODULE_KEYS = {"color", "extends", "setenv", "shell_init", "filesystem", "sockets", "devices"}
+_MODULE_KEYS = {"extends", "setenv", "shell_init", "filesystem", "sockets", "devices"}
 
 # App fields that are lists (append+dedup on deep-merge).
 _APP_LIST_FIELDS = ("modules",)
 # App fields that are scalars (later-wins on deep-merge).
-_APP_SCALAR_FIELDS = ("root", "network", "allow_home")
+_APP_SCALAR_FIELDS = ("root", "color", "network", "allow_home")
 # All valid keys on an app entry (after merge is stripped).
-_APP_KEYS = {"modules", "root", "network", "allow_home", "env"}
+_APP_KEYS = {"modules", "root", "color", "network", "allow_home", "env"}
 
 VALID_MERGE_MODES = {"deep", "override"}
 
@@ -41,7 +41,6 @@ class ConfigError(Exception):
 @dataclass
 class Module:
     name: str
-    color: str = ""
     extends: list[str] = field(default_factory=list)
     setenv: list[str] = field(default_factory=list)
     shell_init: str = ""
@@ -56,6 +55,7 @@ class App:
     name: str
     modules: list[str] = field(default_factory=list)
     root: str | None = None
+    color: str = ""
     network: bool = False
     allow_home: bool = False
     env: dict[str, str] = field(default_factory=dict)
@@ -265,7 +265,6 @@ def load_config(paths: list[Path]) -> Config:
         fs = spec.get("filesystem") or {}
         cfg.modules[name] = Module(
             name=name,
-            color=str(spec.get("color", "")),
             extends=_as_list(spec.get("extends")),
             setenv=_as_list(spec.get("setenv")),
             shell_init=spec.get("shell_init", "") or "",
@@ -281,6 +280,7 @@ def load_config(paths: list[Path]) -> Config:
             name=name,
             modules=_as_list(spec.get("modules")),
             root=spec.get("root"),
+            color=str(spec.get("color", "")),
             network=bool(spec.get("network", False)),
             allow_home=bool(spec.get("allow_home", False)),
             env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},

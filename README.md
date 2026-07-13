@@ -122,19 +122,16 @@ in any profile file are `core:`, `modules:`, and `apps:`.
 
 ### Add a module (a permission bundle)
 
-A module is a YAML mapping under `modules:` with a name, color, and capabilities:
+A module is a YAML mapping under `modules:` with a name and capabilities:
 
 ```yaml
 modules:
   mytool:
-    color: 208
     filesystem:
       rw: [~/.config/mytool]
       ro: [~/.mytoolrc]
 ```
 
-- `color` is an optional 256-color code for the sandbox prompt. Defaults to the
-  engine color (bright cyan, code 39) if omitted.
 - `filesystem.ro` / `filesystem.rw` are lists of paths (`~` and `$VAR` expanded,
   existence-gated with `-try` by default).
 - `sockets`: named host sockets (`wayland`, `pulse`, `pipewire`).
@@ -148,13 +145,14 @@ modules:
 ### Route an app to its modules
 
 Map a binary to a module list under `apps:`, and optionally pick which module
-gives the prompt its color with `root` (defaults to the first module):
+drives the prompt identity with `root` (defaults to the first module):
 
 ```yaml
 apps:
   mytool:
     modules: [node, webdev, mytool]
     root: mytool
+    color: 208          # optional; defaults to engine color (39, bright cyan)
     network: true       # default: false
     allow_home: true    # default: false
 ```
