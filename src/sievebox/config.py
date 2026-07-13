@@ -10,9 +10,28 @@ import yaml
 
 DEFAULT_CONFIG_NAME = "sievebox-profiles.yaml"
 
+# Engine default prompt color (256-color code 39 = bright cyan).
+DEFAULT_COLOR = "39"
+
 # Known capability names (mirrored from capabilities.py).
 KNOWN_SOCKETS = {"wayland", "pulse", "pipewire"}
 KNOWN_DEVICES = {"dri", "snd", "video", "input", "tty", "console"}
+
+# Module fields that are lists (append+dedup on deep-merge).
+_MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices")
+# Module fields that are scalars (later-wins on deep-merge).
+_MODULE_SCALAR_FIELDS = ("color", "shell_init")
+# All valid keys on a module entry (after merge is stripped).
+_MODULE_KEYS = {"color", "extends", "setenv", "shell_init", "filesystem", "sockets", "devices"}
+
+# App fields that are lists (append+dedup on deep-merge).
+_APP_LIST_FIELDS = ("modules",)
+# App fields that are scalars (later-wins on deep-merge).
+_APP_SCALAR_FIELDS = ("root", "network", "allow_home")
+# All valid keys on an app entry (after merge is stripped).
+_APP_KEYS = {"modules", "root", "network", "allow_home", "env"}
+
+VALID_MERGE_MODES = {"deep", "override"}
 
 
 class ConfigError(Exception):
@@ -51,30 +70,60 @@ class Core:
 
 @dataclass
 class Config:
-    path: Path
+    paths: list[Path]
     modules: dict[str, Module] = field(default_factory=dict)
     apps: dict[str, App] = field(default_factory=dict)
     policy: dict = field(default_factory=dict)
     core: Core = field(default_factory=Core)
 
 
-def find_config(script_dir: Path | None = None) -> Path:
-    """First existing of: $SIEVEBOX_CONFIG, <script_dir>/<default>, XDG path."""
-    candidates: list[Path] = []
-    if env := os.environ.get("SIEVEBOX_CONFIG"):
-        candidates.append(Path(env))
-    if script_dir:
-        candidates.append(Path(script_dir) / DEFAULT_CONFIG_NAME)
+def find_config_files(script_dir: Path | None = None) -> list[Path]:
+    """Config files in load order: base, drop-ins, $SIEVEBOX_CONFIG.
+
+    Base is the first existing of <script_dir>/<default> or
+    <xdg>/sievebox/profiles.yaml. Drop-ins are <xdg>/sievebox/profiles.d/*.yaml
+    sorted alphabetically. $SIEVEBOX_CONFIG (if set and existing) is applied
+    last as a final override. If no base exists, $SIEVEBOX_CONFIG serves as the
+    base.
+    """
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    candidates.append(Path(xdg) / "sievebox" / "profiles.yaml")
-    for c in candidates:
+
+    base_candidates: list[Path] = []
+    if script_dir:
+        base_candidates.append(Path(script_dir) / DEFAULT_CONFIG_NAME)
+    base_candidates.append(Path(xdg) / "sievebox" / "profiles.yaml")
+
+    base = None
+    for c in base_candidates:
         if c.is_file():
-            return c
-    raise ConfigError(
-        "no sievebox profile configuration found; looked for:\n  "
-        + "\n  ".join(str(c) for c in candidates)
-        + "\nSet SIEVEBOX_CONFIG=<file> to override."
-    )
+            base = c
+            break
+
+    dropin_dir = Path(xdg) / "sievebox" / "profiles.d"
+    dropins = sorted(dropin_dir.glob("*.yaml")) if dropin_dir.is_dir() else []
+
+    env_cfg = None
+    if env_val := os.environ.get("SIEVEBOX_CONFIG"):
+        env_cfg = Path(env_val)
+
+    paths: list[Path] = []
+    if base:
+        paths.append(base)
+    paths.extend(dropins)
+    if env_cfg and env_cfg.is_file():
+        paths.append(env_cfg)
+
+    if not paths:
+        looked = list(base_candidates)
+        if env_cfg:
+            looked.append(env_cfg)
+        raise ConfigError(
+            "no sievebox profile configuration found; looked for:\n  "
+            + "\n  ".join(str(c) for c in looked)
+            + "\nSet SIEVEBOX_CONFIG=<file> to override."
+        )
+
+    return paths
 
 
 def _as_list(value) -> list:
@@ -83,24 +132,135 @@ def _as_list(value) -> list:
     return value if isinstance(value, list) else [value]
 
 
-def load_config(path: Path) -> Config:
-    try:
-        raw = yaml.safe_load(path.read_text()) or {}
-    except yaml.YAMLError as e:
-        raise ConfigError(f"{path}: invalid YAML: {e}") from e
-    if not isinstance(raw, dict):
-        raise ConfigError(f"{path}: top level must be a mapping")
+def _dedup_append(base_list: list, extra: list) -> list:
+    """Append items from extra to base_list, skipping duplicates. Order: base first."""
+    result = list(base_list)
+    seen = set(base_list)
+    for item in extra:
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
 
-    cfg = Config(path=path, policy=raw.get("policy") or {})
 
-    core_raw = raw.get("core") or {}
+def _deep_merge_entry(base_entry: dict, overlay_entry: dict,
+                      list_fields: tuple, scalar_fields: tuple) -> dict:
+    """Deep-merge a single module or app entry.
+
+    Scalars: later-wins. Lists: append+dedup. Dicts (filesystem, env): per-key
+    merge. Unknown keys: later-wins (passthrough).
+    """
+    result = dict(base_entry)
+    for key, value in overlay_entry.items():
+        if key in scalar_fields:
+            result[key] = value
+        elif key in list_fields:
+            result[key] = _dedup_append(result.get(key, []), value)
+        elif key == "filesystem":
+            base_fs = dict(result.get(key) or {})
+            for subkey, subval in (value or {}).items():
+                if subkey in ("ro", "rw"):
+                    base_fs[subkey] = _dedup_append(base_fs.get(subkey, []), subval)
+                else:
+                    base_fs[subkey] = subval
+            result[key] = base_fs
+        elif key == "env":
+            base_env = dict(result.get(key) or {})
+            base_env.update(value or {})
+            result[key] = base_env
+        else:
+            result[key] = value
+    return result
+
+
+def _merge_section(base_section: dict, overlay_section: dict,
+                   list_fields: tuple, scalar_fields: tuple) -> dict:
+    """Merge a section (modules/apps). Per-entry: deep-merge or override."""
+    result = dict(base_section)
+    for name, entry in overlay_section.items():
+        entry = entry or {}
+        mode = entry.get("merge", "deep")
+        if mode not in VALID_MERGE_MODES:
+            raise ConfigError(
+                f"invalid merge mode '{mode}' for entry '{name}' "
+                f"(valid: {', '.join(sorted(VALID_MERGE_MODES))})"
+            )
+        entry = {k: v for k, v in entry.items() if k != "merge"}
+        if mode == "override" or name not in result:
+            result[name] = entry
+        else:
+            result[name] = _deep_merge_entry(result[name], entry, list_fields, scalar_fields)
+    return result
+
+
+def _merge_raw(base: dict, overlay: dict) -> dict:
+    """Merge overlay into base.
+
+    modules/apps: per-entry deep-merge (default) or override (merge: override).
+    policy: dict-merge per key (replace).
+    core: first-wins (only set from the first file that has it).
+    """
+    result = dict(base)
+    if "modules" in overlay:
+        result["modules"] = _merge_section(
+            result.get("modules") or {}, overlay["modules"],
+            _MODULE_LIST_FIELDS, _MODULE_SCALAR_FIELDS,
+        )
+    if "apps" in overlay:
+        result["apps"] = _merge_section(
+            result.get("apps") or {}, overlay["apps"],
+            _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
+        )
+    if "policy" in overlay:
+        existing = dict(result.get("policy") or {})
+        existing.update(overlay["policy"])
+        result["policy"] = existing
+    if "core" not in result and "core" in overlay:
+        result["core"] = overlay["core"]
+    return result
+
+
+def _check_unknown_keys(merged: dict, paths: list[Path]) -> None:
+    """Reject unknown keys on module and app entries."""
+    errs: list[str] = []
+    for name, spec in (merged.get("modules") or {}).items():
+        spec = spec or {}
+        unknown = set(spec.keys()) - _MODULE_KEYS
+        if unknown:
+            errs.append(f"module '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
+    for name, spec in (merged.get("apps") or {}).items():
+        spec = spec or {}
+        unknown = set(spec.keys()) - _APP_KEYS
+        if unknown:
+            errs.append(f"app '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
+    if errs:
+        files = ", ".join(str(p) for p in paths)
+        raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
+
+
+def load_config(paths: list[Path]) -> Config:
+    merged: dict = {}
+    for path in paths:
+        try:
+            raw = yaml.safe_load(path.read_text()) or {}
+        except yaml.YAMLError as e:
+            raise ConfigError(f"{path}: invalid YAML: {e}") from e
+        if not isinstance(raw, dict):
+            raise ConfigError(f"{path}: top level must be a mapping")
+        merged = _merge_raw(merged, raw)
+
+    cfg = Config(paths=paths, policy=merged.get("policy") or {})
+
+    _check_unknown_keys(merged, paths)
+
+    core_raw = merged.get("core") or {}
     cfg.core = Core(
         args=[[str(t) for t in d] for d in (core_raw.get("args") or [])],
         setenv=[str(s) for s in (core_raw.get("setenv") or [])],
         network=[[str(t) for t in d] for d in (core_raw.get("network") or [])],
     )
 
-    for name, spec in (raw.get("modules") or {}).items():
+    for name, spec in (merged.get("modules") or {}).items():
         spec = spec or {}
         fs = spec.get("filesystem") or {}
         cfg.modules[name] = Module(
@@ -115,7 +275,7 @@ def load_config(path: Path) -> Config:
             devices=_as_list(spec.get("devices")),
         )
 
-    for name, spec in (raw.get("apps") or {}).items():
+    for name, spec in (merged.get("apps") or {}).items():
         spec = spec or {}
         cfg.apps[name] = App(
             name=name,
@@ -153,7 +313,8 @@ def _validate(cfg: Config) -> None:
         if a.root and a.root not in cfg.modules:
             errs.append(f"app '{a.name}' root '{a.root}' is not a module")
     if errs:
-        raise ConfigError(f"{cfg.path}: invalid config:\n  " + "\n  ".join(errs))
+        files = ", ".join(str(p) for p in cfg.paths)
+        raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
 
 
 def flatten_modules(cfg: Config, declared: list[str]) -> list[str]:
