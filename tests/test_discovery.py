@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
@@ -83,20 +80,3 @@ def test_project_detection(tmp_path):
 
     covered = discovery.project_hints(str(tmp_path), ["node", "webdev"])
     assert "All detected types are covered" in covered
-
-
-# --- Bash vs Python parity (throwaway, archived with bash) --------------------
-
-class TestBashParity:
-    def test_sorted_failures_match(self):
-        result = subprocess.run(
-            ["bash", str(D / "bash_classifier.sh"),
-             str(TRACE), str(BOUND_FILE), str(TMPFS_FILE), HERE, PATH_ENV],
-            capture_output=True, text=True,
-        )
-        assert result.returncode == 0, f"bash harness failed: {result.stderr}"
-        bash_lines = sorted(result.stdout.strip().split("\n"))
-
-        f, _, _ = _run_pipeline()
-        py_lines = sorted(_format_failures(f).strip().split("\n"))
-        assert bash_lines == py_lines

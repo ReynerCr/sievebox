@@ -1,0 +1,13 @@
+SYS	1	5	/etc/group	E
+SYS	1	19	/etc/localtime	E
+SYS	1	4	/etc/passwd	E
+WRITE	1	7	/home/user/.cache/myapp	M
+WRITE	1	8	/home/user/.cache/myapp/data.json	M
+WALK	1	14	/home/user/.env	M
+WALK	1	15	/home/user/.env.local	M
+WALK	1	12	/home/user/project/.env	M
+WALK	1	13	/home/user/project/.env.local	M
+DEPS	1	9	/home/user/project/node_modules/express/index.js	M
+DEPS	1	10	/home/user/project/node_modules/react/index.js	M
+EPHEM	1	6	/tmp/node-compile-cache/abc	M
+META	fatal	22	-
