@@ -29,6 +29,7 @@ Options:
   -v, --verbose           More detail (currently for --list)
       --relax=<measure>    Relax a security measure (bwrap, all, filesystem,
                           ro-filesystem)
+      --modules=<list>    Append modules to the app at runtime (comma-separated)
       --raw               Shorthand for --relax=all (no sandbox)
 """
 
@@ -60,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     prompt = os.environ.get("SIEVEBOX_PROMPT", "false") == "true"
     verbose = False
     relaxed: set[str] = set()
+    inject_modules: list[str] = []
     positional: list[str] = []
 
     def set_mode(new: str) -> None:
@@ -96,6 +98,12 @@ def main(argv: list[str] | None = None) -> int:
                     _err(f"invalid --relax value '{val}' (valid: {', '.join(sorted(VALID_RELAX))})")
                     return 2
                 relaxed.add(val)
+        elif a.startswith("--modules="):
+            vals = [v.strip() for v in a[len("--modules="):].split(",")]
+            if not any(vals):
+                _err("--modules= requires at least one module name")
+                return 2
+            inject_modules.extend(vals)
         elif a == "--":
             positional = argv[i + 1:]
             break
@@ -127,9 +135,15 @@ def main(argv: list[str] | None = None) -> int:
         print("       Run 'sievebox --list' to see registered binaries.", file=sys.stderr)
         return 1
 
+    for mod in inject_modules:
+        if mod not in cfg.modules:
+            _err(f"unknown module '{mod}' in --modules= (run 'sievebox --list' for available modules)")
+            return 1
+
     here = os.path.realpath(os.getcwd())
     home = os.environ.get("HOME") or os.path.expanduser("~")
-    comp = compose_mod.compose(cfg, target, here=here, home=home, relaxed=relaxed)
+    comp = compose_mod.compose(cfg, target, here=here, home=home,
+                               relaxed=relaxed, inject_modules=inject_modules)
 
     if mode == "status":
         return _handle_status(cfg, target, comp, relaxed)

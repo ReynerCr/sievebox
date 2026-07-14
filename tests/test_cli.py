@@ -26,6 +26,7 @@ def _base_yaml() -> dict:
             "node": {"setenv": ["PNPM_HOME"],
                      "filesystem": {"ro": ["~/.npmrc"], "rw": ["~/.npm"]}},
             "network": {"raw_args": [["--share-net"]]},
+            "gui": {"sockets": ["wayland"]},
         },
         "apps": {"npm": {"modules": ["node", "network"], "color": "226"}},
     }
@@ -125,6 +126,48 @@ def test_relax_filesystem_and_ro_filesystem_mutually_exclusive(monkeypatch, tmp_
     rc, out, err = _run(["--relax=filesystem,ro-filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 2
     assert "mutually exclusive" in err
+
+
+# --- --modules= ---
+
+def test_modules_injects_module_into_dryrun(monkeypatch, tmp_path):
+    rc, out, err = _run(["--modules=network", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--share-net" in out
+
+
+def test_modules_comma_separated(monkeypatch, tmp_path):
+    rc, out, err = _run(["--modules=network,network", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    # network already in npm's modules, so no duplicate --share-net
+    assert out.count("--share-net") == 1
+
+
+def test_modules_unknown_module_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--modules=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 1
+    assert "unknown module 'bogus'" in err
+
+
+def test_modules_empty_value_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--modules=", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "requires at least one module name" in err
+
+
+def test_modules_shown_in_status(monkeypatch, tmp_path):
+    rc, out, err = _run(["--status", "--modules=network", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    # npm already has network, so effective modules should still list it
+    assert "network" in out
+
+
+def test_modules_adds_capability_not_in_profile(monkeypatch, tmp_path):
+    # npm doesn't have gui by default; inject it
+    rc, out, err = _run(["--modules=gui", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    # gui provides wayland socket bind
+    assert "wayland" in out.lower() or "XDG_RUNTIME_DIR" in out
 
 
 def test_dryrun_with_bwrap(monkeypatch, tmp_path):

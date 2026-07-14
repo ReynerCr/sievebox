@@ -110,6 +110,10 @@ only recognized **before** the binary name.
   - `all`: shorthand for `--raw` (no bwrap at all).
   Multiple values can be comma-separated: `--relax=bwrap,filesystem`.
 - `--raw`: shorthand for `--relax=all`.
+- `--modules=<list>`: append modules to the app's declared list at runtime,
+  comma-separated. Injected modules go through the same `extends` expansion as
+  declared modules. Useful for ad-hoc grants without editing profiles:
+  `sievebox --modules=network,gpu mytool`.
 - `-h, --help`: show the usage info.
 
 ## Overriding binaries
