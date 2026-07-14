@@ -60,8 +60,10 @@ class Composition:
 
 
 def compose(cfg: Config, app_name: str, *, here: str, home: str,
-            env: dict | None = None, relaxed: set[str] | None = None) -> Composition:
+            env: dict | None = None, relaxed: set[str] | None = None,
+            inject_modules: list[str] | None = None) -> Composition:
     relaxed = relaxed or set()
+    inject_modules = inject_modules or []
     env = dict(os.environ if env is None else env)
     app = cfg.apps[app_name]
     for k, v in app.env.items():
@@ -70,7 +72,8 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     fs_relaxed = "filesystem" in relaxed
     ro_fs_relaxed = "ro-filesystem" in relaxed
 
-    eff = flatten_modules(cfg, app.modules)
+    declared = app.modules + inject_modules
+    eff = flatten_modules(cfg, declared)
     if fs_relaxed:
         # Root bind first, then virtual FS on top. Skip redundant host binds
         # and tmpfs (conflicts with the root bind).
@@ -116,11 +119,11 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     if here_mounted:
         args += ["--bind", here, here]
 
-    root = app.root or (app.modules[0] if app.modules else "")
+    root = app.root or (declared[0] if declared else "")
     return Composition(
         bwrap_args=args,
         effective_modules=eff,
-        declared_modules=app.modules,
+        declared_modules=declared,
         root=root,
         color=color,
         network="network" in eff,
