@@ -9,13 +9,14 @@
 #                 entries with an unset $VAR are skipped
 #     sockets     named host sockets: wayland, pulse, pipewire
 #     devices     device names under /dev (e.g. dri)
-#   apps: binary -> { modules, root, color, network, allow_home, env }
+#     raw_args    raw bwrap directives (token lists); {bin} -> target binary,
+#                 ~ -> $HOME. Appended after core args in module order.
+#   apps: binary -> { modules, root, color, allow_home, env }
 #     color       256-color code for the sandbox prompt (optional; defaults to 39)
-#     network    default false   (grant outbound network + cert dirs)
 #     allow_home default false   (permit running directly in $HOME)
 #     root       module driving the prompt color (default: first module)
 #     env        values set in the host env only if currently unset
-#   core: base sandbox applied to every app (args / setenv / network)
+#   core: base sandbox applied to every app (args / setenv)
 #
 # Personal modules and app overrides live in ~/.config/sievebox/profiles.d/*.yaml
 
@@ -74,17 +75,18 @@ core:
     - [--ro-bind-try, "~/.config/gtkrc-2.0", "~/.config/gtkrc-2.0"]
   # Host env vars forwarded into the cleared sandbox (only if set).
   setenv: [HOME, PATH, USER, LOGNAME, TERM, COLORTERM, LANG, LANGUAGE, LC_ALL, LC_CTYPE, XDG_RUNTIME_DIR, XDG_SESSION_TYPE]
-  # Appended when an app has `network: true`.
-  network:
-    - [--share-net]
-    - [--ro-bind-try, /etc/resolv.conf, /etc/resolv.conf]
-    - [--ro-bind-try, /etc/ssl, /etc/ssl]
-    - [--ro-bind-try, /etc/pki, /etc/pki]
-    - [--ro-bind-try, /etc/ca-certificates, /etc/ca-certificates]
 
 modules:
 
   simple_module:
+
+  network:
+    raw_args:
+      - [--share-net]
+      - [--ro-bind-try, /etc/resolv.conf, /etc/resolv.conf]
+      - [--ro-bind-try, /etc/ssl, /etc/ssl]
+      - [--ro-bind-try, /etc/pki, /etc/pki]
+      - [--ro-bind-try, /etc/ca-certificates, /etc/ca-certificates]
 
   gui:
     sockets: [wayland]
@@ -146,11 +148,11 @@ modules:
       rw: [~/.cargo]
 
 apps:
-  conda:    { modules: [conda], color: 184, network: true }
-  npm:      { modules: [node], color: 226, network: true }
-  pnpm:     { modules: [node], color: 226, network: true }
-  yarn:     { modules: [node], color: 226, network: true }
-  npx:      { modules: [node], color: 226, network: true }
-  node:     { modules: [node], color: 226, network: true }
-  bun:      { modules: [node], color: 226, network: true }
-  bash:     { modules: [simple_module], color: 183, network: true }
+  conda:    { modules: [conda, network], color: 184 }
+  npm:      { modules: [node, network], color: 226 }
+  pnpm:     { modules: [node, network], color: 226 }
+  yarn:     { modules: [node, network], color: 226 }
+  npx:      { modules: [node, network], color: 226 }
+  node:     { modules: [node, network], color: 226 }
+  bun:      { modules: [node, network], color: 226 }
+  bash:     { modules: [simple_module], color: 183 }

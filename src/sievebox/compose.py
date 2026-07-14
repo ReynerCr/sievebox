@@ -99,6 +99,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         mod = cfg.modules[name]
         if not fs_relaxed:
             args += capabilities.module_bwrap_args(mod)
+        args += _flatten(mod.raw_args, app_name, home)
         if mod.shell_init:
             shell_inits.append(mod.shell_init)
         setenv_names += capabilities.module_setenv(mod)
@@ -111,9 +112,6 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     color = app.color or DEFAULT_COLOR
     args += ["--setenv", "SIEVEBOX_COLOR", color]
 
-    if app.network:
-        args += _flatten(cfg.core.network, app_name, home)
-
     here_mounted = (here != home) and not app.allow_home
     if here_mounted:
         args += ["--bind", here, here]
@@ -125,7 +123,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         declared_modules=app.modules,
         root=root,
         color=color,
-        network=app.network,
+        network="network" in eff,
         here=here,
         here_mounted=here_mounted,
         home_violation=(here == home) and not app.allow_home,

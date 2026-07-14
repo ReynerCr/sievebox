@@ -18,18 +18,18 @@ KNOWN_SOCKETS = {"wayland", "pulse", "pipewire"}
 KNOWN_DEVICES = {"dri", "snd", "video", "input", "tty", "console"}
 
 # Module fields that are lists (append+dedup on deep-merge).
-_MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices")
+_MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices", "raw_args")
 # Module fields that are scalars (later-wins on deep-merge).
 _MODULE_SCALAR_FIELDS = ("shell_init",)
 # All valid keys on a module entry (after merge is stripped).
-_MODULE_KEYS = {"extends", "setenv", "shell_init", "filesystem", "sockets", "devices"}
+_MODULE_KEYS = {"extends", "setenv", "shell_init", "filesystem", "sockets", "devices", "raw_args"}
 
 # App fields that are lists (append+dedup on deep-merge).
 _APP_LIST_FIELDS = ("modules",)
 # App fields that are scalars (later-wins on deep-merge).
-_APP_SCALAR_FIELDS = ("root", "color", "network", "allow_home")
+_APP_SCALAR_FIELDS = ("root", "color", "allow_home")
 # All valid keys on an app entry (after merge is stripped).
-_APP_KEYS = {"modules", "root", "color", "network", "allow_home", "env"}
+_APP_KEYS = {"modules", "root", "color", "allow_home", "env"}
 
 VALID_MERGE_MODES = {"deep", "override"}
 
@@ -48,6 +48,7 @@ class Module:
     fs_rw: list[str] = field(default_factory=list)
     sockets: list[str] = field(default_factory=list)
     devices: list[str] = field(default_factory=list)
+    raw_args: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -56,7 +57,6 @@ class App:
     modules: list[str] = field(default_factory=list)
     root: str | None = None
     color: str = ""
-    network: bool = False
     allow_home: bool = False
     env: dict[str, str] = field(default_factory=dict)
 
@@ -65,7 +65,6 @@ class App:
 class Core:
     args: list[list[str]] = field(default_factory=list)
     setenv: list[str] = field(default_factory=list)
-    network: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -135,11 +134,9 @@ def _as_list(value) -> list:
 def _dedup_append(base_list: list, extra: list) -> list:
     """Append items from extra to base_list, skipping duplicates. Order: base first."""
     result = list(base_list)
-    seen = set(base_list)
     for item in extra:
-        if item not in seen:
+        if item not in result:
             result.append(item)
-            seen.add(item)
     return result
 
 
@@ -257,7 +254,6 @@ def load_config(paths: list[Path]) -> Config:
     cfg.core = Core(
         args=[[str(t) for t in d] for d in (core_raw.get("args") or [])],
         setenv=[str(s) for s in (core_raw.get("setenv") or [])],
-        network=[[str(t) for t in d] for d in (core_raw.get("network") or [])],
     )
 
     for name, spec in (merged.get("modules") or {}).items():
@@ -272,6 +268,7 @@ def load_config(paths: list[Path]) -> Config:
             fs_rw=_as_list(fs.get("rw")),
             sockets=_as_list(spec.get("sockets")),
             devices=_as_list(spec.get("devices")),
+            raw_args=[[str(t) for t in d] for d in (spec.get("raw_args") or [])],
         )
 
     for name, spec in (merged.get("apps") or {}).items():
@@ -281,7 +278,6 @@ def load_config(paths: list[Path]) -> Config:
             modules=_as_list(spec.get("modules")),
             root=spec.get("root"),
             color=str(spec.get("color", "")),
-            network=bool(spec.get("network", False)),
             allow_home=bool(spec.get("allow_home", False)),
             env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
         )
