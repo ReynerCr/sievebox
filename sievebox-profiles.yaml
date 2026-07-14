@@ -149,10 +149,5 @@ modules:
 
 apps:
   conda:    { modules: [conda, network], color: 184 }
-  npm:      { modules: [node, network], color: 226 }
-  pnpm:     { modules: [node, network], color: 226 }
-  yarn:     { modules: [node, network], color: 226 }
-  npx:      { modules: [node, network], color: 226 }
-  node:     { modules: [node, network], color: 226 }
-  bun:      { modules: [node, network], color: 226 }
+  "npm, pnpm, yarn, npx, node, bun": { modules: [node, network], color: 226 }
   bash:     { modules: [simple_module], color: 183 }

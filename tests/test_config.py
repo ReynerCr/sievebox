@@ -11,12 +11,12 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from sievebox.config import ConfigError, DEFAULT_COLOR, load_config
+from sievebox.config import ConfigError, DEFAULT_COLOR, find_app, load_config
 from sievebox.compose import compose
 
 
 def _write(path: Path, data: dict) -> Path:
-    path.write_text(yaml.dump(data))
+    path.write_text(yaml.dump(data, sort_keys=False))
     return path
 
 
@@ -251,3 +251,200 @@ def test_raw_args_deep_merged(tmp_path):
     cfg = load_config([base, dropin])
     mod = cfg.modules["custom"]
     assert mod.raw_args == [["--share-net"], ["--ro-bind-try", "/etc/ssl", "/etc/ssl"]]
+
+
+# --- comma-separated app keys ---
+
+def test_comma_key_expands_to_separate_apps(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"node": {}, "network": {"raw_args": [["--share-net"]]}},
+        "apps": {
+            "npm, pnpm, yarn": {"modules": ["node", "network"], "color": "226"},
+        },
+    })
+    cfg = load_config([base])
+    for name in ("npm", "pnpm", "yarn"):
+        assert name in cfg.apps
+        assert cfg.apps[name].modules == ["node", "network"]
+        assert cfg.apps[name].color == "226"
+
+
+def test_comma_key_with_spaces_around_names(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"  foo ,  bar  , baz": {"modules": ["m"]}},
+    })
+    cfg = load_config([base])
+    assert set(cfg.apps) == {"foo", "bar", "baz"}
+
+
+def test_dropin_overrides_single_expanded_entry(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"node": {}, "gui": {}, "network": {"raw_args": [["--share-net"]]}},
+        "apps": {
+            "npm, pnpm, yarn": {"modules": ["node", "network"], "color": "226"},
+        },
+    })
+    dropin = _write(tmp_path / "drop.yaml", {
+        "apps": {"npm": {"color": "999"}},
+    })
+    cfg = load_config([base, dropin])
+    assert cfg.apps["npm"].color == "999"
+    assert cfg.apps["npm"].modules == ["node", "network"]
+    assert cfg.apps["pnpm"].color == "226"
+
+
+def test_comma_key_duplicate_in_same_file_raises(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {
+            "npm, pnpm": {"modules": ["m"]},
+            "npm": {"modules": ["m"]},
+        },
+    })
+    with pytest.raises(ConfigError, match="registered twice"):
+        load_config([base])
+
+
+def test_comma_key_duplicate_within_list_raises(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"npm, npm": {"modules": ["m"]}},
+    })
+    with pytest.raises(ConfigError, match="registered twice"):
+        load_config([base])
+
+
+def test_comma_key_empty_name_raises(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"npm, , yarn": {"modules": ["m"]}},
+    })
+    with pytest.raises(ConfigError, match="empty name"):
+        load_config([base])
+
+
+# --- glob app keys ---
+
+def test_glob_key_matches_at_lookup(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}, "network": {"raw_args": [["--share-net"]]}},
+        "apps": {
+            "llama*": {"modules": ["m", "network"], "color": "99"},
+        },
+    })
+    cfg = load_config([base])
+    assert "llama*" not in cfg.apps
+    assert "llama*" in cfg.app_globs
+    app = find_app(cfg, "llama-server")
+    assert app is not None
+    assert app.modules == ["m", "network"]
+    assert app.color == "99"
+
+
+def test_exact_app_shadows_glob(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}, "gui": {}},
+        "apps": {
+            "llama*": {"modules": ["m"], "color": "99"},
+            "llama": {"modules": ["gui"], "color": "200"},
+        },
+    })
+    cfg = load_config([base])
+    app = find_app(cfg, "llama")
+    assert app.modules == ["gui"]
+    assert app.color == "200"
+    # glob still matches other names
+    app2 = find_app(cfg, "llama-bench")
+    assert app2.modules == ["m"]
+    assert app2.color == "99"
+
+
+def test_glob_no_match_returns_none(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"llama*": {"modules": ["m"]}},
+    })
+    cfg = load_config([base])
+    assert find_app(cfg, "npm") is None
+
+
+def test_glob_first_match_in_declaration_order(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}, "gui": {}},
+        "apps": {
+            "llama*": {"modules": ["m"], "color": "99"},
+            "*-server": {"modules": ["gui"], "color": "200"},
+        },
+    })
+    cfg = load_config([base])
+    # "llama-server" matches both; first declared wins
+    app = find_app(cfg, "llama-server")
+    assert app.modules == ["m"]
+    assert app.color == "99"
+    # "foo-server" matches only the second
+    app2 = find_app(cfg, "foo-server")
+    assert app2.modules == ["gui"]
+
+
+def test_glob_deep_merged_across_files(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}, "gui": {}, "network": {"raw_args": [["--share-net"]]}},
+        "apps": {
+            "llama*": {"modules": ["m", "network"], "color": "99"},
+        },
+    })
+    dropin = _write(tmp_path / "drop.yaml", {
+        "apps": {
+            "llama*": {"modules": ["gui"]},
+        },
+    })
+    cfg = load_config([base, dropin])
+    app = find_app(cfg, "llama-server")
+    assert app.modules == ["m", "network", "gui"]
+    assert app.color == "99"
+
+
+def test_glob_override_mode(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}, "gui": {}},
+        "apps": {
+            "llama*": {"modules": ["m"], "color": "99"},
+        },
+    })
+    dropin = _write(tmp_path / "drop.yaml", {
+        "apps": {
+            "llama*": {"merge": "override", "modules": ["gui"], "color": "200"},
+        },
+    })
+    cfg = load_config([base, dropin])
+    app = find_app(cfg, "llama-server")
+    assert app.modules == ["gui"]
+    assert app.color == "200"
+
+
+def test_glob_validates_unknown_module(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {
+            "llama*": {"modules": ["nonexistent"]},
+        },
+    })
+    with pytest.raises(ConfigError, match="references unknown module"):
+        load_config([base])
+
+
+def test_comma_key_with_glob_mixed(tmp_path):
+    """A comma key can contain both exact names and glob patterns."""
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {
+            "npm, foo*": {"modules": ["m"], "color": "226"},
+        },
+    })
+    cfg = load_config([base])
+    assert "npm" in cfg.apps
+    assert "foo*" not in cfg.apps
+    assert "foo*" in cfg.app_globs
+    assert find_app(cfg, "npm").color == "226"
+    assert find_app(cfg, "foo-bar").color == "226"

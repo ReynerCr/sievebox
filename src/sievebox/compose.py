@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 
 from . import capabilities
-from .config import Config, DEFAULT_COLOR, flatten_modules
+from .config import Config, ConfigError, DEFAULT_COLOR, find_app, flatten_modules
 
 # bwrap directives that create or bind filesystem entries.
 _FS_DIRECTIVE_FLAGS = {
@@ -65,7 +65,9 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     relaxed = relaxed or set()
     inject_modules = inject_modules or []
     env = dict(os.environ if env is None else env)
-    app = cfg.apps[app_name]
+    app = find_app(cfg, app_name)
+    if app is None:
+        raise ConfigError(f"'{app_name}' is not registered in any profile")
     for k, v in app.env.items():
         env.setdefault(k, v)
 
