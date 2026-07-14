@@ -28,7 +28,7 @@ def _flatten(directives: list[list[str]], target_bin: str, home: str) -> list[st
 
 def _is_fs_directive(directive: list[str]) -> bool:
     """Whether a core directive creates or binds a filesystem entry."""
-    return directive and directive[0] in FS_DIRECTIVE_FLAGS
+    return bool(directive) and directive[0] in FS_DIRECTIVE_FLAGS
 
 
 @dataclass
