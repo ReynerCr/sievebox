@@ -9,14 +9,12 @@ from pathlib import Path
 
 import yaml
 
+from .capabilities import KNOWN_DEVICES, KNOWN_SOCKETS
+
 DEFAULT_CONFIG_NAME = "sievebox-profiles.yaml"
 
 # Engine default prompt color (256-color code 39 = bright cyan).
 DEFAULT_COLOR = "39"
-
-# Known capability names (mirrored from capabilities.py).
-KNOWN_SOCKETS = {"wayland", "pulse", "pipewire"}
-KNOWN_DEVICES = {"dri", "snd", "video", "input", "tty", "console"}
 
 # Module fields that are lists (append+dedup on deep-merge).
 _MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices", "raw_args")
