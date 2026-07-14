@@ -72,7 +72,6 @@ class Config:
     modules: dict[str, Module] = field(default_factory=dict)
     apps: dict[str, App] = field(default_factory=dict)
     app_globs: dict[str, App] = field(default_factory=dict)
-    policy: dict = field(default_factory=dict)
     core: Core = field(default_factory=Core)
 
 
@@ -232,7 +231,6 @@ def _merge_raw(base: dict, overlay: dict) -> dict:
     """Merge overlay into base.
 
     modules/apps: per-entry deep-merge (default) or override (merge: override).
-    policy: dict-merge per key (replace).
     core: first-wins (only set from the first file that has it).
     """
     result = dict(base)
@@ -246,10 +244,6 @@ def _merge_raw(base: dict, overlay: dict) -> dict:
             result.get("apps") or {}, overlay["apps"],
             _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
         )
-    if "policy" in overlay:
-        existing = dict(result.get("policy") or {})
-        existing.update(overlay["policy"])
-        result["policy"] = existing
     if "core" not in result and "core" in overlay:
         result["core"] = overlay["core"]
     return result
@@ -306,7 +300,7 @@ def load_config(paths: list[Path]) -> Config:
             _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
         )
 
-    cfg = Config(paths=paths, policy=merged.get("policy") or {})
+    cfg = Config(paths=paths)
 
     _check_unknown_keys(merged, merged_globs, paths)
 
@@ -400,17 +394,3 @@ def find_app(cfg: Config, name: str) -> App | None:
         if fnmatch.fnmatch(name, pattern):
             return app
     return None
-
-
-def effective_modules(cfg: Config, app: str) -> list[str]:
-    a = find_app(cfg, app)
-    if a is None:
-        raise KeyError(app)
-    return flatten_modules(cfg, a.modules)
-
-
-def root_module(cfg: Config, app: str) -> str:
-    a = find_app(cfg, app)
-    if a is None:
-        raise KeyError(app)
-    return a.root or (a.modules[0] if a.modules else "")

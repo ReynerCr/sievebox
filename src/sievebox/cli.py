@@ -34,8 +34,6 @@ Options:
       --raw               Shorthand for --relax=all (no sandbox)
 """
 
-PRIMARY = {"list", "status", "discover", "dryrun"}
-
 VALID_RELAX = {"bwrap", "all", "filesystem", "ro-filesystem"}
 
 

@@ -43,7 +43,6 @@ class Composition:
     here_mounted: bool
     home_violation: bool          # here == home and not allow_home
     shell_inits: list[str] = field(default_factory=list)
-    setenv_names: list[str] = field(default_factory=list)
 
 
 def compose(cfg: Config, app_name: str, *, here: str, home: str,
@@ -115,5 +114,4 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         here_mounted=here_mounted,
         home_violation=(here == home) and not app.allow_home,
         shell_inits=shell_inits,
-        setenv_names=setenv_names,
     )
