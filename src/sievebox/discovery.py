@@ -401,53 +401,11 @@ def _section(lines: list[str], failures: list[dict],
         lines.append(f"  ... (+{total - cap} more; see failures.log)")
 
 
-# --- Suggestions --------------------------------------------------------------
-
-def suggest(failures: list[dict], home: str, target_bin: str,
-            effective_deps: list[str], config_path: str) -> str:
-    """Print-only bind suggestions for WRITE+APP buckets."""
-    xdg_roots = [".config", ".local/share", ".local/state", ".cache"]
-
-    def relroot(p: str) -> str:
-        for r in xdg_roots:
-            base = home + "/" + r + "/"
-            if p.startswith(base):
-                rest = p[len(base):]
-                first = rest.split("/")[0]
-                if first:
-                    return base + first
-        return ""
-
-    dirs: set[str] = set()
-    raws: set[str] = set()
-    for r in failures:
-        if r["bucket"] not in ("WRITE", "APP"):
-            continue
-        agg = relroot(r["path"])
-        if agg:
-            dirs.add(agg)
-        else:
-            raws.add(r["path"])
-
-    lines = [
-        f"# Effective modules for {target_bin}: {' '.join(effective_deps)}",
-        f"# Paste into the most appropriate module in: {config_path}",
-        "# WRITE entries usually need rw --bind; others default to --bind-try.",
-    ]
-    for d in sorted(dirs):
-        rel = d.replace(home, "$HOME", 1)
-        lines.append(f'  --bind-try "{rel}/" "{rel}/"')
-    for p in sorted(raws):
-        rel = p.replace(home, "$HOME", 1)
-        lines.append(f'  --bind-try "{rel}" "{rel}"')
-    return "\n".join(lines)
-
-
 # --- Orchestration ------------------------------------------------------------
 
 def run_discovery(cfg, target: str, invocation: list[str],
                   here: str, home: str, state_dir: str,
-                  config_path: str, effective_deps: list[str]) -> int:
+                  effective_deps: list[str]) -> int:
     """Run strace+bwrap, classify, summarize. Returns exit code."""
     if not _which("strace"):
         print("Error: --discover requires 'strace' (not found on PATH).", file=sys.stderr)
@@ -509,13 +467,6 @@ def run_discovery(cfg, target: str, invocation: list[str],
     print(summary)
     print("=" * 68)
     print(f"[discovery] Full artifacts kept in: {run_dir}")
-
-    has_write_app = any(r["bucket"] in ("WRITE", "APP") for r in failures)
-    if has_write_app:
-        ans = input("[discovery] Show paste-ready bind suggestions (WRITE+APP)? [y/N] ")
-        if ans.strip().lower() == "y":
-            print()
-            print(suggest(failures, home, target, effective_deps, config_path))
 
     return rc
 

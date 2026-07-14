@@ -11,7 +11,7 @@ from pathlib import Path
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
 from .bwrap import arity, category
-from .config import ConfigError, find_app, find_config_files, flatten_modules, load_config
+from .config import DEFAULT_COLOR, ConfigError, find_app, find_config_files, flatten_modules, load_config
 
 USAGE = """\
 Usage: sievebox [options] <binary> [args...]
@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return discovery_mod.run_discovery(
             cfg, target, invocation, here, home, state_dir,
-            ", ".join(str(p) for p in cfg.paths), comp.effective_modules,
+            comp.effective_modules,
         )
 
     if prompt:
@@ -246,11 +246,9 @@ def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
                 _err(f"'{b}' is not registered. Run 'sievebox --list' for all.")
                 continue
             eff = flatten_modules(cfg, app.modules)
-            root = app.root or (app.modules[0] if app.modules else "")
             print(f"Modules for '{b}':")
             print(f"  Declared:   {' '.join(app.modules)}")
             print(f"  Effective:  {' '.join(eff)}   (inheritance-expanded)")
-            print(f"  Root:       {root}")
             if verbose:
                 for name in eff:
                     m = cfg.modules[name]
@@ -282,7 +280,8 @@ def _handle_status(cfg, target: str, comp, relaxed: set[str] | None = None) -> i
     print(f"  Config files:       {', '.join(str(p) for p in cfg.paths)}")
     print(f"  Declared modules:   {' '.join(comp.declared_modules)}")
     print(f"  Effective modules:  {' '.join(comp.effective_modules)}")
-    print(f"  Root (identity):    {comp.root} (color {comp.color})")
+    c = comp.color or DEFAULT_COLOR
+    print(f"  Identity color:     {_color(c)}{c}{RESET}")
     print(f"  Network access:     {'enabled' if comp.network else 'disabled'}")
     state = "mounted" if comp.here_mounted else "not mounted"
     print(f"  Workspace ($HERE):  {state} ({comp.here})")

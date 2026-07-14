@@ -26,9 +26,9 @@ _MODULE_KEYS = {"extends", "setenv", "shell_init", "filesystem", "sockets", "dev
 # App fields that are lists (append+dedup on deep-merge).
 _APP_LIST_FIELDS = ("modules",)
 # App fields that are scalars (later-wins on deep-merge).
-_APP_SCALAR_FIELDS = ("root", "color", "allow_home")
+_APP_SCALAR_FIELDS = ("color", "allow_home")
 # All valid keys on an app entry (after merge is stripped).
-_APP_KEYS = {"modules", "root", "color", "allow_home", "env"}
+_APP_KEYS = {"modules", "color", "allow_home", "env"}
 
 VALID_MERGE_MODES = {"deep", "override"}
 
@@ -54,7 +54,6 @@ class Module:
 class App:
     name: str
     modules: list[str] = field(default_factory=list)
-    root: str | None = None
     color: str = ""
     allow_home: bool = False
     env: dict[str, str] = field(default_factory=dict)
@@ -254,7 +253,6 @@ def _build_app(name: str, spec: dict) -> App:
     return App(
         name=name,
         modules=_as_list(spec.get("modules")),
-        root=spec.get("root"),
         color=str(spec.get("color", "")),
         allow_home=bool(spec.get("allow_home", False)),
         env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
@@ -341,8 +339,6 @@ def _validate_app(a: App, label: str, cfg: Config, errs: list[str]) -> None:
     for mod in a.modules:
         if mod not in cfg.modules:
             errs.append(f"{label} '{a.name}' references unknown module '{mod}'")
-    if a.root and a.root not in cfg.modules:
-        errs.append(f"{label} '{a.name}' root '{a.root}' is not a module")
 
 
 def _validate(cfg: Config) -> None:

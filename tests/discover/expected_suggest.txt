@@ -1,4 +1,0 @@
-# Effective modules for node: node webdev gui
-# Paste into the most appropriate module in: /fake/path
-# WRITE entries usually need rw --bind; others default to --bind-try.
-  --bind-try "$HOME/.cache/myapp/" "$HOME/.cache/myapp/"
