@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
-from .config import ConfigError, find_config_files, load_config
+from .config import ConfigError, find_app, find_config_files, load_config
 
 USAGE = """\
 Usage: sievebox [options] <binary> [args...]
@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     target = os.path.basename(positional[0])
 
-    if target not in cfg.apps:
+    if find_app(cfg, target) is None:
         _err(f"'{target}' is not registered in any profile.")
         print("       Run 'sievebox --list' to see registered binaries.", file=sys.stderr)
         return 1
@@ -242,10 +242,10 @@ def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
         from .config import flatten_modules
         for raw in bins:
             b = os.path.basename(raw)
-            if b not in cfg.apps:
+            app = find_app(cfg, b)
+            if app is None:
                 _err(f"'{b}' is not registered. Run 'sievebox --list' for all.")
                 continue
-            app = cfg.apps[b]
             eff = flatten_modules(cfg, app.modules)
             root = app.root or (app.modules[0] if app.modules else "")
             print(f"Modules for '{b}':")
@@ -270,6 +270,10 @@ def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
         print("Registered sievebox binaries:")
         for b in sorted(cfg.apps):
             print(f"  {b:<14} -> {' '.join(cfg.apps[b].modules)}")
+        if cfg.app_globs:
+            print("\nGlob patterns:")
+            for p in cfg.app_globs:
+                print(f"  {p:<14} -> {' '.join(cfg.app_globs[p].modules)}")
     return 0
 
 

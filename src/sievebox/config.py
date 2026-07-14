@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,6 +73,7 @@ class Config:
     paths: list[Path]
     modules: dict[str, Module] = field(default_factory=dict)
     apps: dict[str, App] = field(default_factory=dict)
+    app_globs: dict[str, App] = field(default_factory=dict)
     policy: dict = field(default_factory=dict)
     core: Core = field(default_factory=Core)
 
@@ -220,6 +222,34 @@ def _expand_app_keys(raw: dict, path: Path) -> dict:
     return raw
 
 
+_GLOB_CHARS = set("*?[")
+
+
+def _is_glob_pattern(name: str) -> bool:
+    return any(c in name for c in _GLOB_CHARS)
+
+
+def _split_glob_keys(raw: dict, path: Path) -> tuple[dict, dict]:
+    """Separate glob-pattern app keys from exact keys.
+
+    Returns (raw_with_exact_only, globs). Glob keys are stored separately and
+    matched at lookup time via fnmatch, in declaration order.
+    """
+    apps = raw.get("apps")
+    if not apps or not isinstance(apps, dict):
+        return raw, {}
+    exact: dict = {}
+    globs: dict = {}
+    for key, spec in apps.items():
+        if _is_glob_pattern(key):
+            globs[key] = spec
+        else:
+            exact[key] = spec
+    raw = dict(raw)
+    raw["apps"] = exact
+    return raw, globs
+
+
 def _merge_raw(base: dict, overlay: dict) -> dict:
     """Merge overlay into base.
 
@@ -247,8 +277,8 @@ def _merge_raw(base: dict, overlay: dict) -> dict:
     return result
 
 
-def _check_unknown_keys(merged: dict, paths: list[Path]) -> None:
-    """Reject unknown keys on module and app entries."""
+def _check_unknown_keys(merged: dict, merged_globs: dict, paths: list[Path]) -> None:
+    """Reject unknown keys on module, app, and glob entries."""
     errs: list[str] = []
     for name, spec in (merged.get("modules") or {}).items():
         spec = spec or {}
@@ -260,6 +290,11 @@ def _check_unknown_keys(merged: dict, paths: list[Path]) -> None:
         unknown = set(spec.keys()) - _APP_KEYS
         if unknown:
             errs.append(f"app '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
+    for pattern, spec in merged_globs.items():
+        spec = spec or {}
+        unknown = set(spec.keys()) - _APP_KEYS
+        if unknown:
+            errs.append(f"app glob '{pattern}' has unknown key(s): {', '.join(sorted(unknown))}")
     if errs:
         files = ", ".join(str(p) for p in paths)
         raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
@@ -267,6 +302,7 @@ def _check_unknown_keys(merged: dict, paths: list[Path]) -> None:
 
 def load_config(paths: list[Path]) -> Config:
     merged: dict = {}
+    merged_globs: dict = {}
     for path in paths:
         try:
             raw = yaml.safe_load(path.read_text()) or {}
@@ -275,11 +311,16 @@ def load_config(paths: list[Path]) -> Config:
         if not isinstance(raw, dict):
             raise ConfigError(f"{path}: top level must be a mapping")
         raw = _expand_app_keys(raw, path)
+        raw, globs = _split_glob_keys(raw, path)
         merged = _merge_raw(merged, raw)
+        merged_globs = _merge_section(
+            merged_globs, globs,
+            _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
+        )
 
     cfg = Config(paths=paths, policy=merged.get("policy") or {})
 
-    _check_unknown_keys(merged, paths)
+    _check_unknown_keys(merged, merged_globs, paths)
 
     core_raw = merged.get("core") or {}
     cfg.core = Core(
@@ -313,6 +354,17 @@ def load_config(paths: list[Path]) -> Config:
             env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
         )
 
+    for pattern, spec in merged_globs.items():
+        spec = spec or {}
+        cfg.app_globs[pattern] = App(
+            name=pattern,
+            modules=_as_list(spec.get("modules")),
+            root=spec.get("root"),
+            color=str(spec.get("color", "")),
+            allow_home=bool(spec.get("allow_home", False)),
+            env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
+        )
+
     _validate(cfg)
     return cfg
 
@@ -339,6 +391,14 @@ def _validate(cfg: Config) -> None:
                 errs.append(f"app '{a.name}' references unknown module '{mod}'")
         if a.root and a.root not in cfg.modules:
             errs.append(f"app '{a.name}' root '{a.root}' is not a module")
+    for a in cfg.app_globs.values():
+        if not a.modules:
+            errs.append(f"app glob '{a.name}' has no modules")
+        for mod in a.modules:
+            if mod not in cfg.modules:
+                errs.append(f"app glob '{a.name}' references unknown module '{mod}'")
+        if a.root and a.root not in cfg.modules:
+            errs.append(f"app glob '{a.name}' root '{a.root}' is not a module")
     if errs:
         files = ", ".join(str(p) for p in cfg.paths)
         raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
@@ -362,10 +422,25 @@ def flatten_modules(cfg: Config, declared: list[str]) -> list[str]:
     return out
 
 
+def find_app(cfg: Config, name: str) -> App | None:
+    """Resolve an app by exact name, then glob patterns in declaration order."""
+    if name in cfg.apps:
+        return cfg.apps[name]
+    for pattern, app in cfg.app_globs.items():
+        if fnmatch.fnmatch(name, pattern):
+            return app
+    return None
+
+
 def effective_modules(cfg: Config, app: str) -> list[str]:
-    return flatten_modules(cfg, cfg.apps[app].modules)
+    a = find_app(cfg, app)
+    if a is None:
+        raise KeyError(app)
+    return flatten_modules(cfg, a.modules)
 
 
 def root_module(cfg: Config, app: str) -> str:
-    a = cfg.apps[app]
+    a = find_app(cfg, app)
+    if a is None:
+        raise KeyError(app)
     return a.root or (a.modules[0] if a.modules else "")
