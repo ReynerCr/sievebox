@@ -6,21 +6,8 @@ import os
 from dataclasses import dataclass, field
 
 from . import capabilities
+from .bwrap import FS_DIRECTIVE_FLAGS, VIRTUAL_FS_FLAGS
 from .config import Config, ConfigError, DEFAULT_COLOR, find_app, flatten_modules
-
-# bwrap directives that create or bind filesystem entries.
-_FS_DIRECTIVE_FLAGS = {
-    "--tmpfs", "--ro-bind", "--ro-bind-try", "--bind", "--bind-try",
-    "--dev", "--dev-bind", "--dev-bind-try", "--proc", "--symlink",
-    "--overlay", "--overlay-try",
-}
-
-# Directives that create fresh virtual filesystems inside the sandbox.
-# These must come AFTER the root bind so they overlay it properly
-# (e.g. --dev /dev on top of --bind / / gives a working /dev).
-# --tmpfs is excluded: core uses it for specific paths (/tmp, /run,
-# /var/cache/fontconfig) that conflict with the host root bind.
-_VIRTUAL_FS_FLAGS = {"--dev", "--proc"}
 
 
 def _expand_token(tok: str, target_bin: str, home: str) -> str:
@@ -41,7 +28,7 @@ def _flatten(directives: list[list[str]], target_bin: str, home: str) -> list[st
 
 def _is_fs_directive(directive: list[str]) -> bool:
     """Whether a core directive creates or binds a filesystem entry."""
-    return directive and directive[0] in _FS_DIRECTIVE_FLAGS
+    return directive and directive[0] in FS_DIRECTIVE_FLAGS
 
 
 @dataclass
@@ -81,7 +68,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         # and tmpfs (conflicts with the root bind).
         args = ["--bind", "/", "/"]
         for d in cfg.core.args:
-            if d[0] in _VIRTUAL_FS_FLAGS:
+            if d[0] in VIRTUAL_FS_FLAGS:
                 args += _flatten([d], app_name, home)
             elif not _is_fs_directive(d):
                 args += _flatten([d], app_name, home)
@@ -90,7 +77,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         # and tmpfs. Module rw binds overlay the ro root.
         args = ["--ro-bind", "/", "/"]
         for d in cfg.core.args:
-            if d[0] in _VIRTUAL_FS_FLAGS:
+            if d[0] in VIRTUAL_FS_FLAGS:
                 args += _flatten([d], app_name, home)
             elif not _is_fs_directive(d):
                 args += _flatten([d], app_name, home)

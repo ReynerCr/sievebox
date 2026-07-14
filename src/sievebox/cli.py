@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
+from .bwrap import arity, category
 from .config import ConfigError, find_app, find_config_files, load_config
 
 USAGE = """\
@@ -226,14 +227,15 @@ def _grouped(args: list[str]) -> dict[str, list[str]]:
     i = 0
     while i < len(args):
         f = args[i]
-        if f in ("--ro-bind", "--ro-bind-try"):
-            ro.append(args[i + 2]); i += 3
-        elif f in ("--bind", "--bind-try"):
-            rw.append(args[i + 2]); i += 3
-        elif f in ("--dev-bind", "--dev-bind-try"):
-            dev.append(args[i + 2]); i += 3
-        else:
-            i += 1
+        n = arity(f)
+        cat = category(f)
+        if cat == "bind_ro":
+            ro.append(args[i + 2])
+        elif cat == "bind_rw":
+            rw.append(args[i + 2])
+        elif cat == "bind_dev":
+            dev.append(args[i + 2])
+        i += n
     return {"rw": rw, "ro": ro, "dev": dev}
 
 
