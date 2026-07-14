@@ -10,7 +10,8 @@ from pathlib import Path
 
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
-from .config import ConfigError, find_app, find_config_files, load_config
+from .bwrap import arity, category
+from .config import ConfigError, find_app, find_config_files, flatten_modules, load_config
 
 USAGE = """\
 Usage: sievebox [options] <binary> [args...]
@@ -32,8 +33,6 @@ Options:
       --modules=<list>    Append modules to the app at runtime (comma-separated)
       --raw               Shorthand for --relax=all (no sandbox)
 """
-
-PRIMARY = {"list", "status", "discover", "dryrun"}
 
 VALID_RELAX = {"bwrap", "all", "filesystem", "ro-filesystem"}
 
@@ -226,20 +225,20 @@ def _grouped(args: list[str]) -> dict[str, list[str]]:
     i = 0
     while i < len(args):
         f = args[i]
-        if f in ("--ro-bind", "--ro-bind-try"):
-            ro.append(args[i + 2]); i += 3
-        elif f in ("--bind", "--bind-try"):
-            rw.append(args[i + 2]); i += 3
-        elif f in ("--dev-bind", "--dev-bind-try"):
-            dev.append(args[i + 2]); i += 3
-        else:
-            i += 1
+        n = arity(f)
+        cat = category(f)
+        if cat == "bind_ro":
+            ro.append(args[i + 2])
+        elif cat == "bind_rw":
+            rw.append(args[i + 2])
+        elif cat == "bind_dev":
+            dev.append(args[i + 2])
+        i += n
     return {"rw": rw, "ro": ro, "dev": dev}
 
 
 def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
     if bins:
-        from .config import flatten_modules
         for raw in bins:
             b = os.path.basename(raw)
             app = find_app(cfg, b)
@@ -304,7 +303,9 @@ def _handle_status(cfg, target: str, comp, relaxed: set[str] | None = None) -> i
 def _prompt_create(bwrap_args: list[str]) -> None:
     i = 0
     while i < len(bwrap_args):
-        if bwrap_args[i] in ("--bind-try", "--ro-bind-try", "--dev-bind-try"):
+        f = bwrap_args[i]
+        n = arity(f)
+        if category(f) in ("bind_rw", "bind_ro", "bind_dev") and f.endswith("-try"):
             src = bwrap_args[i + 1]
             if not os.path.exists(src):
                 ans = input(f"Missing bind source: {src}\n  [c]reate as directory / [s]kip (default skip)? ")
@@ -314,9 +315,7 @@ def _prompt_create(bwrap_args: list[str]) -> None:
                         print(f"  created directory: {src}", file=sys.stderr)
                     except OSError as e:
                         print(f"  failed to create: {src} ({e})", file=sys.stderr)
-            i += 3
-        else:
-            i += 1
+        i += n
 
 
 def _banner(comp, target: str) -> None:

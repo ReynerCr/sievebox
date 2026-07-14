@@ -20,8 +20,6 @@
 #
 # Personal modules and app overrides live in ~/.config/sievebox/profiles.d/*.yaml
 
-policy: {}
-
 # Base sandbox applied to every app, in order. Each `args` entry is a bwrap
 # directive (token list); {bin} -> target binary, ~ -> $HOME. ADVANCED: this is
 # the security floor — edit with care.

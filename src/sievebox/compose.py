@@ -6,21 +6,8 @@ import os
 from dataclasses import dataclass, field
 
 from . import capabilities
+from .bwrap import FS_DIRECTIVE_FLAGS, VIRTUAL_FS_FLAGS
 from .config import Config, ConfigError, DEFAULT_COLOR, find_app, flatten_modules
-
-# bwrap directives that create or bind filesystem entries.
-_FS_DIRECTIVE_FLAGS = {
-    "--tmpfs", "--ro-bind", "--ro-bind-try", "--bind", "--bind-try",
-    "--dev", "--dev-bind", "--dev-bind-try", "--proc", "--symlink",
-    "--overlay", "--overlay-try",
-}
-
-# Directives that create fresh virtual filesystems inside the sandbox.
-# These must come AFTER the root bind so they overlay it properly
-# (e.g. --dev /dev on top of --bind / / gives a working /dev).
-# --tmpfs is excluded: core uses it for specific paths (/tmp, /run,
-# /var/cache/fontconfig) that conflict with the host root bind.
-_VIRTUAL_FS_FLAGS = {"--dev", "--proc"}
 
 
 def _expand_token(tok: str, target_bin: str, home: str) -> str:
@@ -41,7 +28,7 @@ def _flatten(directives: list[list[str]], target_bin: str, home: str) -> list[st
 
 def _is_fs_directive(directive: list[str]) -> bool:
     """Whether a core directive creates or binds a filesystem entry."""
-    return directive and directive[0] in _FS_DIRECTIVE_FLAGS
+    return bool(directive) and directive[0] in FS_DIRECTIVE_FLAGS
 
 
 @dataclass
@@ -56,7 +43,6 @@ class Composition:
     here_mounted: bool
     home_violation: bool          # here == home and not allow_home
     shell_inits: list[str] = field(default_factory=list)
-    setenv_names: list[str] = field(default_factory=list)
 
 
 def compose(cfg: Config, app_name: str, *, here: str, home: str,
@@ -73,24 +59,19 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
 
     fs_relaxed = "filesystem" in relaxed
     ro_fs_relaxed = "ro-filesystem" in relaxed
+    root_bind = None
+    if fs_relaxed or ro_fs_relaxed:
+        root_bind = "--bind" if fs_relaxed else "--ro-bind"
 
     declared = app.modules + inject_modules
     eff = flatten_modules(cfg, declared)
-    if fs_relaxed:
+    if root_bind:
         # Root bind first, then virtual FS on top. Skip redundant host binds
-        # and tmpfs (conflicts with the root bind).
-        args = ["--bind", "/", "/"]
+        # and tmpfs (conflicts with the root bind). Module rw binds overlay
+        # the root later in the module loop.
+        args = [root_bind, "/", "/"]
         for d in cfg.core.args:
-            if d[0] in _VIRTUAL_FS_FLAGS:
-                args += _flatten([d], app_name, home)
-            elif not _is_fs_directive(d):
-                args += _flatten([d], app_name, home)
-    elif ro_fs_relaxed:
-        # Root bind first, then virtual FS on top. Skip redundant host binds
-        # and tmpfs. Module rw binds overlay the ro root.
-        args = ["--ro-bind", "/", "/"]
-        for d in cfg.core.args:
-            if d[0] in _VIRTUAL_FS_FLAGS:
+            if d[0] in VIRTUAL_FS_FLAGS:
                 args += _flatten([d], app_name, home)
             elif not _is_fs_directive(d):
                 args += _flatten([d], app_name, home)
@@ -133,5 +114,4 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         here_mounted=here_mounted,
         home_violation=(here == home) and not app.allow_home,
         shell_inits=shell_inits,
-        setenv_names=setenv_names,
     )

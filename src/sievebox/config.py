@@ -9,14 +9,12 @@ from pathlib import Path
 
 import yaml
 
+from .capabilities import KNOWN_DEVICES, KNOWN_SOCKETS
+
 DEFAULT_CONFIG_NAME = "sievebox-profiles.yaml"
 
 # Engine default prompt color (256-color code 39 = bright cyan).
 DEFAULT_COLOR = "39"
-
-# Known capability names (mirrored from capabilities.py).
-KNOWN_SOCKETS = {"wayland", "pulse", "pipewire"}
-KNOWN_DEVICES = {"dri", "snd", "video", "input", "tty", "console"}
 
 # Module fields that are lists (append+dedup on deep-merge).
 _MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices", "raw_args")
@@ -74,7 +72,6 @@ class Config:
     modules: dict[str, Module] = field(default_factory=dict)
     apps: dict[str, App] = field(default_factory=dict)
     app_globs: dict[str, App] = field(default_factory=dict)
-    policy: dict = field(default_factory=dict)
     core: Core = field(default_factory=Core)
 
 
@@ -192,36 +189,6 @@ def _merge_section(base_section: dict, overlay_section: dict,
     return result
 
 
-def _expand_app_keys(raw: dict, path: Path) -> dict:
-    """Expand comma-separated app keys into individual entries.
-
-    A key like "npm, pnpm, yarn" produces three separate entries with identical
-    specs. Expansion happens per-file before merging, so a drop-in can override
-    a single expanded entry by its plain name. A name that already exists as a
-    separate key in the same file (or appears twice in comma lists) is an error.
-    """
-    apps = raw.get("apps")
-    if not apps or not isinstance(apps, dict):
-        return raw
-    expanded: dict = {}
-    for key, spec in apps.items():
-        names = [n.strip() for n in key.split(",")]
-        for name in names:
-            if not name:
-                raise ConfigError(
-                    f"{path}: app key '{key}' contains an empty name"
-                )
-            if name in expanded:
-                raise ConfigError(
-                    f"{path}: app '{name}' registered twice in the same file "
-                    f"(via comma key or duplicate key)"
-                )
-            expanded[name] = spec
-    raw = dict(raw)
-    raw["apps"] = expanded
-    return raw
-
-
 _GLOB_CHARS = set("*?[")
 
 
@@ -229,32 +196,41 @@ def _is_glob_pattern(name: str) -> bool:
     return any(c in name for c in _GLOB_CHARS)
 
 
-def _split_glob_keys(raw: dict, path: Path) -> tuple[dict, dict]:
-    """Separate glob-pattern app keys from exact keys.
+def _normalize_app_keys(raw: dict, path: Path) -> tuple[dict, dict]:
+    """Expand comma-separated keys and separate glob patterns in one pass.
 
-    Returns (raw_with_exact_only, globs). Glob keys are stored separately and
-    matched at lookup time via fnmatch, in declaration order.
+    Returns (exact, globs). Comma keys like "npm, pnpm" produce individual
+    entries with identical specs. Keys containing glob chars (*?[]) go into
+    globs; the rest go into exact. Duplicate names within the same file (via
+    comma expansion or duplicate keys) are an error. Expansion happens per-file
+    before merging, so drop-ins can override individual expanded entries.
     """
     apps = raw.get("apps")
     if not apps or not isinstance(apps, dict):
-        return raw, {}
+        return {}, {}
     exact: dict = {}
     globs: dict = {}
     for key, spec in apps.items():
-        if _is_glob_pattern(key):
-            globs[key] = spec
-        else:
-            exact[key] = spec
-    raw = dict(raw)
-    raw["apps"] = exact
-    return raw, globs
+        names = [n.strip() for n in key.split(",")]
+        for name in names:
+            if not name:
+                raise ConfigError(
+                    f"{path}: app key '{key}' contains an empty name"
+                )
+            target = globs if _is_glob_pattern(name) else exact
+            if name in target:
+                raise ConfigError(
+                    f"{path}: app '{name}' registered twice in the same file "
+                    f"(via comma key or duplicate key)"
+                )
+            target[name] = spec
+    return exact, globs
 
 
 def _merge_raw(base: dict, overlay: dict) -> dict:
     """Merge overlay into base.
 
     modules/apps: per-entry deep-merge (default) or override (merge: override).
-    policy: dict-merge per key (replace).
     core: first-wins (only set from the first file that has it).
     """
     result = dict(base)
@@ -268,13 +244,21 @@ def _merge_raw(base: dict, overlay: dict) -> dict:
             result.get("apps") or {}, overlay["apps"],
             _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
         )
-    if "policy" in overlay:
-        existing = dict(result.get("policy") or {})
-        existing.update(overlay["policy"])
-        result["policy"] = existing
     if "core" not in result and "core" in overlay:
         result["core"] = overlay["core"]
     return result
+
+
+def _build_app(name: str, spec: dict) -> App:
+    spec = spec or {}
+    return App(
+        name=name,
+        modules=_as_list(spec.get("modules")),
+        root=spec.get("root"),
+        color=str(spec.get("color", "")),
+        allow_home=bool(spec.get("allow_home", False)),
+        env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
+    )
 
 
 def _check_unknown_keys(merged: dict, merged_globs: dict, paths: list[Path]) -> None:
@@ -285,16 +269,13 @@ def _check_unknown_keys(merged: dict, merged_globs: dict, paths: list[Path]) -> 
         unknown = set(spec.keys()) - _MODULE_KEYS
         if unknown:
             errs.append(f"module '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
-    for name, spec in (merged.get("apps") or {}).items():
-        spec = spec or {}
-        unknown = set(spec.keys()) - _APP_KEYS
-        if unknown:
-            errs.append(f"app '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
-    for pattern, spec in merged_globs.items():
-        spec = spec or {}
-        unknown = set(spec.keys()) - _APP_KEYS
-        if unknown:
-            errs.append(f"app glob '{pattern}' has unknown key(s): {', '.join(sorted(unknown))}")
+    for label, section in (("app", merged.get("apps") or {}),
+                           ("app glob", merged_globs)):
+        for name, spec in section.items():
+            spec = spec or {}
+            unknown = set(spec.keys()) - _APP_KEYS
+            if unknown:
+                errs.append(f"{label} '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
     if errs:
         files = ", ".join(str(p) for p in paths)
         raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
@@ -310,15 +291,16 @@ def load_config(paths: list[Path]) -> Config:
             raise ConfigError(f"{path}: invalid YAML: {e}") from e
         if not isinstance(raw, dict):
             raise ConfigError(f"{path}: top level must be a mapping")
-        raw = _expand_app_keys(raw, path)
-        raw, globs = _split_glob_keys(raw, path)
+        exact_apps, glob_apps = _normalize_app_keys(raw, path)
+        raw = dict(raw)
+        raw["apps"] = exact_apps
         merged = _merge_raw(merged, raw)
         merged_globs = _merge_section(
-            merged_globs, globs,
+            merged_globs, glob_apps,
             _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
         )
 
-    cfg = Config(paths=paths, policy=merged.get("policy") or {})
+    cfg = Config(paths=paths)
 
     _check_unknown_keys(merged, merged_globs, paths)
 
@@ -344,29 +326,23 @@ def load_config(paths: list[Path]) -> Config:
         )
 
     for name, spec in (merged.get("apps") or {}).items():
-        spec = spec or {}
-        cfg.apps[name] = App(
-            name=name,
-            modules=_as_list(spec.get("modules")),
-            root=spec.get("root"),
-            color=str(spec.get("color", "")),
-            allow_home=bool(spec.get("allow_home", False)),
-            env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
-        )
+        cfg.apps[name] = _build_app(name, spec)
 
     for pattern, spec in merged_globs.items():
-        spec = spec or {}
-        cfg.app_globs[pattern] = App(
-            name=pattern,
-            modules=_as_list(spec.get("modules")),
-            root=spec.get("root"),
-            color=str(spec.get("color", "")),
-            allow_home=bool(spec.get("allow_home", False)),
-            env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
-        )
+        cfg.app_globs[pattern] = _build_app(pattern, spec)
 
     _validate(cfg)
     return cfg
+
+
+def _validate_app(a: App, label: str, cfg: Config, errs: list[str]) -> None:
+    if not a.modules:
+        errs.append(f"{label} '{a.name}' has no modules")
+    for mod in a.modules:
+        if mod not in cfg.modules:
+            errs.append(f"{label} '{a.name}' references unknown module '{mod}'")
+    if a.root and a.root not in cfg.modules:
+        errs.append(f"{label} '{a.name}' root '{a.root}' is not a module")
 
 
 def _validate(cfg: Config) -> None:
@@ -384,21 +360,9 @@ def _validate(cfg: Config) -> None:
                 errs.append(f"module '{m.name}' has unknown device '{dev}' "
                             f"(known: {', '.join(sorted(KNOWN_DEVICES))})")
     for a in cfg.apps.values():
-        if not a.modules:
-            errs.append(f"app '{a.name}' has no modules")
-        for mod in a.modules:
-            if mod not in cfg.modules:
-                errs.append(f"app '{a.name}' references unknown module '{mod}'")
-        if a.root and a.root not in cfg.modules:
-            errs.append(f"app '{a.name}' root '{a.root}' is not a module")
+        _validate_app(a, "app", cfg, errs)
     for a in cfg.app_globs.values():
-        if not a.modules:
-            errs.append(f"app glob '{a.name}' has no modules")
-        for mod in a.modules:
-            if mod not in cfg.modules:
-                errs.append(f"app glob '{a.name}' references unknown module '{mod}'")
-        if a.root and a.root not in cfg.modules:
-            errs.append(f"app glob '{a.name}' root '{a.root}' is not a module")
+        _validate_app(a, "app glob", cfg, errs)
     if errs:
         files = ", ".join(str(p) for p in cfg.paths)
         raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
@@ -430,17 +394,3 @@ def find_app(cfg: Config, name: str) -> App | None:
         if fnmatch.fnmatch(name, pattern):
             return app
     return None
-
-
-def effective_modules(cfg: Config, app: str) -> list[str]:
-    a = find_app(cfg, app)
-    if a is None:
-        raise KeyError(app)
-    return flatten_modules(cfg, a.modules)
-
-
-def root_module(cfg: Config, app: str) -> str:
-    a = find_app(cfg, app)
-    if a is None:
-        raise KeyError(app)
-    return a.root or (a.modules[0] if a.modules else "")

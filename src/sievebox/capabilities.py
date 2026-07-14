@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import os
 import re
+from typing import TYPE_CHECKING
 
-from .config import Module
+if TYPE_CHECKING:
+    from .config import Module
 
 _VAR = re.compile(r"\$(\w+)|\$\{(\w+)\}")
+
+# Known device names under /dev that modules can request.
+KNOWN_DEVICES: set[str] = {"dri", "snd", "video", "input", "tty", "console"}
 
 # socket name -> (mode, path template); each path gates on its own $VARs
 _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
@@ -19,6 +24,9 @@ _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
     ],
     "pipewire": [("ro", "$XDG_RUNTIME_DIR/pipewire-0")],
 }
+
+# Known socket names (derived from _SOCKET_BINDS keys).
+KNOWN_SOCKETS: set[str] = set(_SOCKET_BINDS)
 
 # host env vars a socket needs forwarded into the sandbox
 _SOCKET_SETENV: dict[str, list[str]] = {

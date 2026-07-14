@@ -9,6 +9,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from .bwrap import arity, category
+
 # --- Classification tables (env-overridable) ---------------------------------
 
 ERRNOS = os.environ.get("DISCOVERY_ERRNOS", "ENOENT EACCES EROFS").split()
@@ -59,25 +61,19 @@ def extract_bound_paths(bwrap_args: list[str]) -> set[str]:
     i = 0
     while i < len(bwrap_args):
         f = bwrap_args[i]
-        if f in ("--bind", "--ro-bind", "--dev-bind"):
-            out.add(bwrap_args[i + 2]); i += 3
-        elif f in ("--bind-try", "--ro-bind-try", "--dev-bind-try"):
-            src, dst = bwrap_args[i + 1], bwrap_args[i + 2]
-            if os.path.exists(src):
-                out.add(dst)
-            i += 3
-        elif f == "--symlink":
-            out.add(bwrap_args[i + 2]); i += 3
-        elif f in ("--dev", "--proc"):
-            out.add(bwrap_args[i + 1]); i += 2
-        elif f == "--tmpfs":
-            i += 2
-        elif f in ("--setenv", "--file", "--bind-data", "--ro-bind-data"):
-            i += 3
-        elif f in ("--hostname", "--remount-ro", "--chdir", "--uid", "--gid"):
-            i += 2
-        else:
-            i += 1
+        cat = category(f)
+        n = arity(f)
+        if cat in ("bind_rw", "bind_ro", "bind_dev", "bind_overlay"):
+            if f.endswith("-try"):
+                if os.path.exists(bwrap_args[i + 1]):
+                    out.add(bwrap_args[i + 2])
+            else:
+                out.add(bwrap_args[i + 2])
+        elif cat == "symlink":
+            out.add(bwrap_args[i + 2])
+        elif cat == "virtual_fs":
+            out.add(bwrap_args[i + 1])
+        i += n
     out.add("/dev")
     out.add("/proc")
     return out
@@ -89,19 +85,12 @@ def extract_tmpfs_paths(bwrap_args: list[str]) -> set[str]:
     i = 0
     while i < len(bwrap_args):
         f = bwrap_args[i]
-        if f == "--tmpfs":
+        n = arity(f)
+        if category(f) == "tmpfs":
             dst = bwrap_args[i + 1]
             if dst and dst != "/":
                 out.add(dst)
-            i += 2
-        elif f in ("--bind", "--ro-bind", "--dev-bind",
-                    "--bind-try", "--ro-bind-try", "--dev-bind-try",
-                    "--symlink", "--setenv", "--file", "--bind-data", "--ro-bind-data"):
-            i += 3
-        elif f in ("--dev", "--proc", "--hostname", "--remount-ro", "--chdir", "--uid", "--gid"):
-            i += 2
-        else:
-            i += 1
+        i += n
     return out
 
 
