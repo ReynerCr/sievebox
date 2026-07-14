@@ -251,3 +251,74 @@ def test_raw_args_deep_merged(tmp_path):
     cfg = load_config([base, dropin])
     mod = cfg.modules["custom"]
     assert mod.raw_args == [["--share-net"], ["--ro-bind-try", "/etc/ssl", "/etc/ssl"]]
+
+
+# --- comma-separated app keys ---
+
+def test_comma_key_expands_to_separate_apps(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"node": {}, "network": {"raw_args": [["--share-net"]]}},
+        "apps": {
+            "npm, pnpm, yarn": {"modules": ["node", "network"], "color": "226"},
+        },
+    })
+    cfg = load_config([base])
+    for name in ("npm", "pnpm", "yarn"):
+        assert name in cfg.apps
+        assert cfg.apps[name].modules == ["node", "network"]
+        assert cfg.apps[name].color == "226"
+
+
+def test_comma_key_with_spaces_around_names(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"  foo ,  bar  , baz": {"modules": ["m"]}},
+    })
+    cfg = load_config([base])
+    assert set(cfg.apps) == {"foo", "bar", "baz"}
+
+
+def test_dropin_overrides_single_expanded_entry(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"node": {}, "gui": {}, "network": {"raw_args": [["--share-net"]]}},
+        "apps": {
+            "npm, pnpm, yarn": {"modules": ["node", "network"], "color": "226"},
+        },
+    })
+    dropin = _write(tmp_path / "drop.yaml", {
+        "apps": {"npm": {"color": "999"}},
+    })
+    cfg = load_config([base, dropin])
+    assert cfg.apps["npm"].color == "999"
+    assert cfg.apps["npm"].modules == ["node", "network"]
+    assert cfg.apps["pnpm"].color == "226"
+
+
+def test_comma_key_duplicate_in_same_file_raises(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {
+            "npm, pnpm": {"modules": ["m"]},
+            "npm": {"modules": ["m"]},
+        },
+    })
+    with pytest.raises(ConfigError, match="registered twice"):
+        load_config([base])
+
+
+def test_comma_key_duplicate_within_list_raises(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"npm, npm": {"modules": ["m"]}},
+    })
+    with pytest.raises(ConfigError, match="registered twice"):
+        load_config([base])
+
+
+def test_comma_key_empty_name_raises(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"npm, , yarn": {"modules": ["m"]}},
+    })
+    with pytest.raises(ConfigError, match="empty name"):
+        load_config([base])

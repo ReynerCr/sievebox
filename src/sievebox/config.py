@@ -190,6 +190,36 @@ def _merge_section(base_section: dict, overlay_section: dict,
     return result
 
 
+def _expand_app_keys(raw: dict, path: Path) -> dict:
+    """Expand comma-separated app keys into individual entries.
+
+    A key like "npm, pnpm, yarn" produces three separate entries with identical
+    specs. Expansion happens per-file before merging, so a drop-in can override
+    a single expanded entry by its plain name. A name that already exists as a
+    separate key in the same file (or appears twice in comma lists) is an error.
+    """
+    apps = raw.get("apps")
+    if not apps or not isinstance(apps, dict):
+        return raw
+    expanded: dict = {}
+    for key, spec in apps.items():
+        names = [n.strip() for n in key.split(",")]
+        for name in names:
+            if not name:
+                raise ConfigError(
+                    f"{path}: app key '{key}' contains an empty name"
+                )
+            if name in expanded:
+                raise ConfigError(
+                    f"{path}: app '{name}' registered twice in the same file "
+                    f"(via comma key or duplicate key)"
+                )
+            expanded[name] = spec
+    raw = dict(raw)
+    raw["apps"] = expanded
+    return raw
+
+
 def _merge_raw(base: dict, overlay: dict) -> dict:
     """Merge overlay into base.
 
@@ -244,6 +274,7 @@ def load_config(paths: list[Path]) -> Config:
             raise ConfigError(f"{path}: invalid YAML: {e}") from e
         if not isinstance(raw, dict):
             raise ConfigError(f"{path}: top level must be a mapping")
+        raw = _expand_app_keys(raw, path)
         merged = _merge_raw(merged, raw)
 
     cfg = Config(paths=paths, policy=merged.get("policy") or {})
