@@ -277,6 +277,18 @@ def _merge_raw(base: dict, overlay: dict) -> dict:
     return result
 
 
+def _build_app(name: str, spec: dict) -> App:
+    spec = spec or {}
+    return App(
+        name=name,
+        modules=_as_list(spec.get("modules")),
+        root=spec.get("root"),
+        color=str(spec.get("color", "")),
+        allow_home=bool(spec.get("allow_home", False)),
+        env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
+    )
+
+
 def _check_unknown_keys(merged: dict, merged_globs: dict, paths: list[Path]) -> None:
     """Reject unknown keys on module, app, and glob entries."""
     errs: list[str] = []
@@ -285,16 +297,13 @@ def _check_unknown_keys(merged: dict, merged_globs: dict, paths: list[Path]) -> 
         unknown = set(spec.keys()) - _MODULE_KEYS
         if unknown:
             errs.append(f"module '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
-    for name, spec in (merged.get("apps") or {}).items():
-        spec = spec or {}
-        unknown = set(spec.keys()) - _APP_KEYS
-        if unknown:
-            errs.append(f"app '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
-    for pattern, spec in merged_globs.items():
-        spec = spec or {}
-        unknown = set(spec.keys()) - _APP_KEYS
-        if unknown:
-            errs.append(f"app glob '{pattern}' has unknown key(s): {', '.join(sorted(unknown))}")
+    for label, section in (("app", merged.get("apps") or {}),
+                           ("app glob", merged_globs)):
+        for name, spec in section.items():
+            spec = spec or {}
+            unknown = set(spec.keys()) - _APP_KEYS
+            if unknown:
+                errs.append(f"{label} '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
     if errs:
         files = ", ".join(str(p) for p in paths)
         raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
@@ -344,29 +353,23 @@ def load_config(paths: list[Path]) -> Config:
         )
 
     for name, spec in (merged.get("apps") or {}).items():
-        spec = spec or {}
-        cfg.apps[name] = App(
-            name=name,
-            modules=_as_list(spec.get("modules")),
-            root=spec.get("root"),
-            color=str(spec.get("color", "")),
-            allow_home=bool(spec.get("allow_home", False)),
-            env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
-        )
+        cfg.apps[name] = _build_app(name, spec)
 
     for pattern, spec in merged_globs.items():
-        spec = spec or {}
-        cfg.app_globs[pattern] = App(
-            name=pattern,
-            modules=_as_list(spec.get("modules")),
-            root=spec.get("root"),
-            color=str(spec.get("color", "")),
-            allow_home=bool(spec.get("allow_home", False)),
-            env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
-        )
+        cfg.app_globs[pattern] = _build_app(pattern, spec)
 
     _validate(cfg)
     return cfg
+
+
+def _validate_app(a: App, label: str, cfg: Config, errs: list[str]) -> None:
+    if not a.modules:
+        errs.append(f"{label} '{a.name}' has no modules")
+    for mod in a.modules:
+        if mod not in cfg.modules:
+            errs.append(f"{label} '{a.name}' references unknown module '{mod}'")
+    if a.root and a.root not in cfg.modules:
+        errs.append(f"{label} '{a.name}' root '{a.root}' is not a module")
 
 
 def _validate(cfg: Config) -> None:
@@ -384,21 +387,9 @@ def _validate(cfg: Config) -> None:
                 errs.append(f"module '{m.name}' has unknown device '{dev}' "
                             f"(known: {', '.join(sorted(KNOWN_DEVICES))})")
     for a in cfg.apps.values():
-        if not a.modules:
-            errs.append(f"app '{a.name}' has no modules")
-        for mod in a.modules:
-            if mod not in cfg.modules:
-                errs.append(f"app '{a.name}' references unknown module '{mod}'")
-        if a.root and a.root not in cfg.modules:
-            errs.append(f"app '{a.name}' root '{a.root}' is not a module")
+        _validate_app(a, "app", cfg, errs)
     for a in cfg.app_globs.values():
-        if not a.modules:
-            errs.append(f"app glob '{a.name}' has no modules")
-        for mod in a.modules:
-            if mod not in cfg.modules:
-                errs.append(f"app glob '{a.name}' references unknown module '{mod}'")
-        if a.root and a.root not in cfg.modules:
-            errs.append(f"app glob '{a.name}' root '{a.root}' is not a module")
+        _validate_app(a, "app glob", cfg, errs)
     if errs:
         files = ", ".join(str(p) for p in cfg.paths)
         raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
