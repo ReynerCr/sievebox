@@ -17,7 +17,6 @@ TMPFS_FILE = D / "tmpfs_paths.txt"
 HERE = "/home/user/project"
 PATH_ENV = "/usr/local/bin:/usr/bin:/bin"
 TARGET = "node"
-EFFECTIVE_DEPS = ["node", "webdev", "gui"]
 
 BOUND = set(BOUND_FILE.read_text().strip().split("\n"))
 TMPFS = set(TMPFS_FILE.read_text().strip().split("\n"))
@@ -61,12 +60,6 @@ def test_probing_match_golden():
 def test_summary_match_golden():
     _, _, s = _run_pipeline()
     assert s + "\n" == (D / "expected_summary.txt").read_text()
-
-
-def test_suggest_match_golden():
-    f, _, _ = _run_pipeline()
-    out = discovery.suggest(f, "/home/user", TARGET, EFFECTIVE_DEPS, "/fake/path")
-    assert out + "\n" == (D / "expected_suggest.txt").read_text()
 
 
 # --- Project detection (needs real filesystem) --------------------------------

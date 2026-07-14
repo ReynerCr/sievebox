@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return discovery_mod.run_discovery(
             cfg, target, invocation, here, home, state_dir,
-            ", ".join(str(p) for p in cfg.paths), comp.effective_modules,
+            comp.effective_modules,
         )
 
     if prompt:
