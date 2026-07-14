@@ -11,7 +11,7 @@ from pathlib import Path
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
 from .bwrap import arity, category
-from .config import ConfigError, find_app, find_config_files, load_config
+from .config import ConfigError, find_app, find_config_files, flatten_modules, load_config
 
 USAGE = """\
 Usage: sievebox [options] <binary> [args...]
@@ -239,7 +239,6 @@ def _grouped(args: list[str]) -> dict[str, list[str]]:
 
 def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
     if bins:
-        from .config import flatten_modules
         for raw in bins:
             b = os.path.basename(raw)
             app = find_app(cfg, b)
@@ -304,7 +303,9 @@ def _handle_status(cfg, target: str, comp, relaxed: set[str] | None = None) -> i
 def _prompt_create(bwrap_args: list[str]) -> None:
     i = 0
     while i < len(bwrap_args):
-        if bwrap_args[i] in ("--bind-try", "--ro-bind-try", "--dev-bind-try"):
+        f = bwrap_args[i]
+        n = arity(f)
+        if category(f) in ("bind_rw", "bind_ro", "bind_dev") and f.endswith("-try"):
             src = bwrap_args[i + 1]
             if not os.path.exists(src):
                 ans = input(f"Missing bind source: {src}\n  [c]reate as directory / [s]kip (default skip)? ")
@@ -314,9 +315,7 @@ def _prompt_create(bwrap_args: list[str]) -> None:
                         print(f"  created directory: {src}", file=sys.stderr)
                     except OSError as e:
                         print(f"  failed to create: {src} ({e})", file=sys.stderr)
-            i += 3
-        else:
-            i += 1
+        i += n
 
 
 def _banner(comp, target: str) -> None:
