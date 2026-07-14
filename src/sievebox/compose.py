@@ -36,7 +36,6 @@ class Composition:
     bwrap_args: list[str]
     effective_modules: list[str]
     declared_modules: list[str]
-    root: str
     color: str
     network: bool
     here: str
@@ -102,12 +101,10 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     if here_mounted:
         args += ["--bind", here, here]
 
-    root = app.root or (declared[0] if declared else "")
     return Composition(
         bwrap_args=args,
         effective_modules=eff,
         declared_modules=declared,
-        root=root,
         color=color,
         network="network" in eff,
         here=here,
