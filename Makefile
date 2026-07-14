@@ -7,11 +7,11 @@ PYTEST := $(PYTHON) -m pytest
 help:
 	@echo "sievebox development tasks:"
 	@echo "  make test    Run the test suite"
-	@echo "  make lint    Syntax-check all Python and bash files"
+	@echo "  make lint    Syntax-check all Python files"
 	@echo "  make clean   Remove caches and temp files"
 
 test:
-	PYTHONPATH=$(PYTHONPATH) $(PYTEST) tests/ -v -k "not BashParity"
+	PYTHONPATH=$(PYTHONPATH) $(PYTEST) tests/ -v
 
 lint:
 	@$(PYTHON) -c "import ast,sys; [ast.parse(open(f).read()) for f in sys.argv[1:]] and print('python syntax OK')" \
