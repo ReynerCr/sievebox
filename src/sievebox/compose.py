@@ -8,6 +8,20 @@ from dataclasses import dataclass, field
 from . import capabilities
 from .config import Config, DEFAULT_COLOR, flatten_modules
 
+# bwrap directives that create or bind filesystem entries.
+_FS_DIRECTIVE_FLAGS = {
+    "--tmpfs", "--ro-bind", "--ro-bind-try", "--bind", "--bind-try",
+    "--dev", "--dev-bind", "--dev-bind-try", "--proc", "--symlink",
+    "--overlay", "--overlay-try",
+}
+
+# Directives that create fresh virtual filesystems inside the sandbox.
+# These must come AFTER the root bind so they overlay it properly
+# (e.g. --dev /dev on top of --bind / / gives a working /dev).
+# --tmpfs is excluded: core uses it for specific paths (/tmp, /run,
+# /var/cache/fontconfig) that conflict with the host root bind.
+_VIRTUAL_FS_FLAGS = {"--dev", "--proc"}
+
 
 def _expand_token(tok: str, target_bin: str, home: str) -> str:
     """Expand a core directive token: {bin} -> binary, leading ~ -> $HOME."""
@@ -23,6 +37,11 @@ def _flatten(directives: list[list[str]], target_bin: str, home: str) -> list[st
         for tok in directive:
             out.append(_expand_token(tok, target_bin, home))
     return out
+
+
+def _is_fs_directive(directive: list[str]) -> bool:
+    """Whether a core directive creates or binds a filesystem entry."""
+    return directive and directive[0] in _FS_DIRECTIVE_FLAGS
 
 
 @dataclass
@@ -41,20 +60,45 @@ class Composition:
 
 
 def compose(cfg: Config, app_name: str, *, here: str, home: str,
-            env: dict | None = None) -> Composition:
+            env: dict | None = None, relaxed: set[str] | None = None) -> Composition:
+    relaxed = relaxed or set()
     env = dict(os.environ if env is None else env)
     app = cfg.apps[app_name]
     for k, v in app.env.items():
         env.setdefault(k, v)
 
+    fs_relaxed = "filesystem" in relaxed
+    ro_fs_relaxed = "ro-filesystem" in relaxed
+
     eff = flatten_modules(cfg, app.modules)
-    args = _flatten(cfg.core.args, app_name, home)
+    if fs_relaxed:
+        # Root bind first, then virtual FS on top. Skip redundant host binds
+        # and tmpfs (conflicts with the root bind).
+        args = ["--bind", "/", "/"]
+        for d in cfg.core.args:
+            if d[0] in _VIRTUAL_FS_FLAGS:
+                args += _flatten([d], app_name, home)
+            elif not _is_fs_directive(d):
+                args += _flatten([d], app_name, home)
+    elif ro_fs_relaxed:
+        # Root bind first, then virtual FS on top. Skip redundant host binds
+        # and tmpfs. Module rw binds overlay the ro root.
+        args = ["--ro-bind", "/", "/"]
+        for d in cfg.core.args:
+            if d[0] in _VIRTUAL_FS_FLAGS:
+                args += _flatten([d], app_name, home)
+            elif not _is_fs_directive(d):
+                args += _flatten([d], app_name, home)
+    else:
+        args = _flatten(cfg.core.args, app_name, home)
+
     shell_inits: list[str] = []
     setenv_names: list[str] = list(cfg.core.setenv)
 
     for name in eff:
         mod = cfg.modules[name]
-        args += capabilities.module_bwrap_args(mod)
+        if not fs_relaxed:
+            args += capabilities.module_bwrap_args(mod)
         if mod.shell_init:
             shell_inits.append(mod.shell_init)
         setenv_names += capabilities.module_setenv(mod)

@@ -76,6 +76,56 @@ def test_relax_comma_separated(monkeypatch, tmp_path):
     assert out.strip() == "npm"
 
 
+def test_relax_filesystem_dryrun(monkeypatch, tmp_path):
+    rc, out, err = _run(["--relax=filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "bwrap" in out
+    assert "--bind / /" in out
+    # --tmpfs / is replaced, but --tmpfs /tmp etc. are kept (virtual FS on top)
+    assert "--tmpfs / \\\n" not in out
+    assert "--symlink" not in out
+    # --dev /dev must come after --bind / / so device nodes work
+    assert "--dev /dev" in out
+
+
+def test_relax_filesystem_status(monkeypatch, tmp_path):
+    rc, out, err = _run(["--status", "--relax=filesystem", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "Relaxed measures:" in out
+    assert "filesystem" in out
+
+
+def test_relax_filesystem_no_remount_ro(monkeypatch, tmp_path):
+    rc, out, err = _run(["--relax=filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--remount-ro" not in out
+
+
+def test_relax_ro_filesystem_dryrun(monkeypatch, tmp_path):
+    rc, out, err = _run(["--relax=ro-filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "bwrap" in out
+    assert "--ro-bind / /" in out
+    # --tmpfs / is replaced, but --tmpfs /tmp and --tmpfs /run are kept
+    assert "--tmpfs / \\\n" not in out
+    assert "--symlink" not in out
+    # Module rw binds are kept (writable paths on top of ro root)
+    assert "--bind-try" in out
+
+
+def test_relax_ro_filesystem_status(monkeypatch, tmp_path):
+    rc, out, err = _run(["--status", "--relax=ro-filesystem", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "Relaxed measures:" in out
+    assert "ro-filesystem" in out
+
+
+def test_relax_filesystem_and_ro_filesystem_mutually_exclusive(monkeypatch, tmp_path):
+    rc, out, err = _run(["--relax=filesystem,ro-filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "mutually exclusive" in err
+
+
 def test_dryrun_with_bwrap(monkeypatch, tmp_path):
     rc, out, err = _run(["--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0

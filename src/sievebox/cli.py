@@ -27,13 +27,14 @@ Options:
       --discover          Run <binary> under strace to find missing permissions
   -p, --prompt            Offer to create missing optional bind directories
   -v, --verbose           More detail (currently for --list)
-      --relax=<measure>    Relax a security measure (bwrap, all)
+      --relax=<measure>    Relax a security measure (bwrap, all, filesystem,
+                          ro-filesystem)
       --raw               Shorthand for --relax=all (no sandbox)
 """
 
 PRIMARY = {"list", "status", "discover", "dryrun"}
 
-VALID_RELAX = {"bwrap", "all"}
+VALID_RELAX = {"bwrap", "all", "filesystem", "ro-filesystem"}
 
 
 def _color(code: str) -> str:
@@ -128,12 +129,16 @@ def main(argv: list[str] | None = None) -> int:
 
     here = os.path.realpath(os.getcwd())
     home = os.environ.get("HOME") or os.path.expanduser("~")
-    comp = compose_mod.compose(cfg, target, here=here, home=home)
+    comp = compose_mod.compose(cfg, target, here=here, home=home, relaxed=relaxed)
 
     if mode == "status":
         return _handle_status(cfg, target, comp, relaxed)
 
     bwrap_off = "bwrap" in relaxed or "all" in relaxed
+
+    if "filesystem" in relaxed and "ro-filesystem" in relaxed:
+        _err("--relax=filesystem and --relax=ro-filesystem are mutually exclusive.")
+        return 2
 
     if mode == "discover" and bwrap_off:
         _err("--discover requires the sandbox; cannot use with --relax=bwrap or --raw.")
@@ -159,7 +164,10 @@ def main(argv: list[str] | None = None) -> int:
     script = exec_mod.build_exec_cmd(comp.color, comp.shell_inits)
     # arg0 = target basename (drives the conda check); the full positional
     # (binary as typed + its args) becomes "$@", which the script exec's.
-    invocation = comp.bwrap_args + ["--remount-ro", "/", "bash", "-c", script, target, *positional]
+    # --remount-ro / would undo --relax=filesystem's rw bind.
+    fs_relaxed = "filesystem" in relaxed
+    remount = [] if fs_relaxed else ["--remount-ro", "/"]
+    invocation = comp.bwrap_args + remount + ["bash", "-c", script, target, *positional]
 
     if mode == "dryrun":
         lines = [" ".join(_quote(t) for t in grp) for grp in _dryrun_lines(invocation)]

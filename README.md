@@ -97,11 +97,18 @@ only recognized **before** the binary name.
   permissions (see below). Needs `strace`.
 - `-p, --prompt`: when a tool's optional bind directory is missing, offer to
   create it (also via `SIEVEBOX_PROMPT=true`). Default is to skip.
-- `--relax=<measure>`: relax a security measure. Currently `bwrap` (no
-  namespace isolation, plain exec) and `all` (shorthand: `--raw`). The app runs
-  directly on the host with no sandbox, no wrapper script, no banner. Useful
-  from shell overrides when you occasionally want a plain exec. Multiple values
-  can be comma-separated: `--relax=bwrap,filesystem`.
+- `--relax=<measure>`: relax a security measure. Accepted values:
+  - `bwrap`: no namespace isolation, plain exec. The app runs directly on the
+    host with no sandbox, no wrapper script, no banner.
+  - `filesystem`: full host filesystem access (`--bind / /`). Namespace
+    isolation, env isolation, and network policy remain. Module-level
+    filesystem/device/socket binds are skipped.
+  - `ro-filesystem`: read-only host filesystem (`--ro-bind / /`). The app can
+    read any file on the host but can only write to paths the profile explicitly
+    grants via module rw binds. Namespace isolation, env isolation, and network
+    policy remain.
+  - `all`: shorthand for `--raw` (no bwrap at all).
+  Multiple values can be comma-separated: `--relax=bwrap,filesystem`.
 - `--raw`: shorthand for `--relax=all`.
 - `-h, --help`: show the usage info.
 
