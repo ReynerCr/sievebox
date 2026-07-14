@@ -202,4 +202,51 @@ def test_empty_paths_produces_empty_config(tmp_path):
     """load_config with no files yields an empty but valid Config."""
     cfg = load_config([])
     assert cfg.modules == {}
-    assert cfg.apps == {}
+
+
+# --- raw_args ---
+
+def test_raw_args_parsed_into_module(tmp_path):
+    data = _base_yaml()
+    data["modules"]["custom"] = {
+        "raw_args": [["--share-net"], ["--ro-bind-try", "/etc/ssl", "/etc/ssl"]],
+    }
+    data["apps"]["npm"]["modules"] = ["node", "custom"]
+    base = _write(tmp_path / "base.yaml", data)
+    cfg = load_config([base])
+    mod = cfg.modules["custom"]
+    assert mod.raw_args == [["--share-net"], ["--ro-bind-try", "/etc/ssl", "/etc/ssl"]]
+
+
+def test_raw_args_expanded_in_compose(tmp_path):
+    data = _base_yaml()
+    data["modules"]["custom"] = {
+        "raw_args": [["--symlink", "usr/bin", "/{bin}"], ["--ro-bind-try", "~/.config/app", "~/.config/app"]],
+    }
+    data["apps"]["npm"]["modules"] = ["node", "custom"]
+    base = _write(tmp_path / "base.yaml", data)
+    cfg = load_config([base])
+    import os
+    home = os.environ.get("HOME", "/home/test")
+    comp = compose(cfg, "npm", here="/tmp/proj", home=home)
+    # {bin} expanded to app name, ~ expanded to home
+    assert "--symlink" in comp.bwrap_args
+    assert "/npm" in comp.bwrap_args
+    assert f"{home}/.config/app" in comp.bwrap_args
+
+
+def test_raw_args_deep_merged(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "custom": {"raw_args": [["--share-net"]]},
+        },
+        "apps": {"npm": {"modules": ["custom"], "color": "226", "network": True}},
+    })
+    dropin = _write(tmp_path / "drop.yaml", {
+        "modules": {
+            "custom": {"raw_args": [["--ro-bind-try", "/etc/ssl", "/etc/ssl"]]},
+        },
+    })
+    cfg = load_config([base, dropin])
+    mod = cfg.modules["custom"]
+    assert mod.raw_args == [["--share-net"], ["--ro-bind-try", "/etc/ssl", "/etc/ssl"]]

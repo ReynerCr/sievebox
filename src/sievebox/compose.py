@@ -99,6 +99,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         mod = cfg.modules[name]
         if not fs_relaxed:
             args += capabilities.module_bwrap_args(mod)
+        args += _flatten(mod.raw_args, app_name, home)
         if mod.shell_init:
             shell_inits.append(mod.shell_init)
         setenv_names += capabilities.module_setenv(mod)

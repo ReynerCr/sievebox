@@ -18,11 +18,11 @@ KNOWN_SOCKETS = {"wayland", "pulse", "pipewire"}
 KNOWN_DEVICES = {"dri", "snd", "video", "input", "tty", "console"}
 
 # Module fields that are lists (append+dedup on deep-merge).
-_MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices")
+_MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices", "raw_args")
 # Module fields that are scalars (later-wins on deep-merge).
 _MODULE_SCALAR_FIELDS = ("shell_init",)
 # All valid keys on a module entry (after merge is stripped).
-_MODULE_KEYS = {"extends", "setenv", "shell_init", "filesystem", "sockets", "devices"}
+_MODULE_KEYS = {"extends", "setenv", "shell_init", "filesystem", "sockets", "devices", "raw_args"}
 
 # App fields that are lists (append+dedup on deep-merge).
 _APP_LIST_FIELDS = ("modules",)
@@ -48,6 +48,7 @@ class Module:
     fs_rw: list[str] = field(default_factory=list)
     sockets: list[str] = field(default_factory=list)
     devices: list[str] = field(default_factory=list)
+    raw_args: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -135,11 +136,9 @@ def _as_list(value) -> list:
 def _dedup_append(base_list: list, extra: list) -> list:
     """Append items from extra to base_list, skipping duplicates. Order: base first."""
     result = list(base_list)
-    seen = set(base_list)
     for item in extra:
-        if item not in seen:
+        if item not in result:
             result.append(item)
-            seen.add(item)
     return result
 
 
@@ -272,6 +271,7 @@ def load_config(paths: list[Path]) -> Config:
             fs_rw=_as_list(fs.get("rw")),
             sockets=_as_list(spec.get("sockets")),
             devices=_as_list(spec.get("devices")),
+            raw_args=[[str(t) for t in d] for d in (spec.get("raw_args") or [])],
         )
 
     for name, spec in (merged.get("apps") or {}).items():
