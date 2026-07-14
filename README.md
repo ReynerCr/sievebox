@@ -97,6 +97,12 @@ only recognized **before** the binary name.
   permissions (see below). Needs `strace`.
 - `-p, --prompt`: when a tool's optional bind directory is missing, offer to
   create it (also via `SIEVEBOX_PROMPT=true`). Default is to skip.
+- `--relax=<measure>`: relax a security measure. Currently `bwrap` (no
+  namespace isolation, plain exec) and `all` (shorthand: `--raw`). The app runs
+  directly on the host with no sandbox, no wrapper script, no banner. Useful
+  from shell overrides when you occasionally want a plain exec. Multiple values
+  can be comma-separated: `--relax=bwrap,filesystem`.
+- `--raw`: shorthand for `--relax=all`.
 - `-h, --help`: show the usage info.
 
 ## Overriding binaries

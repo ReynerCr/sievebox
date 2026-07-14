@@ -23,13 +23,17 @@ Options:
   -l, --list [binary...]  List modules for the given binaries (-v: + permissions);
                           with no binary, list all registered binaries
       --status            Show the resolved sandbox config for <binary>
-      --dry-run           Print the composed bwrap command without running it
+      --dry-run           Print the composed command without running it
       --discover          Run <binary> under strace to find missing permissions
   -p, --prompt            Offer to create missing optional bind directories
   -v, --verbose           More detail (currently for --list)
+      --relax=<measure>    Relax a security measure (bwrap, all)
+      --raw               Shorthand for --relax=all (no sandbox)
 """
 
 PRIMARY = {"list", "status", "discover", "dryrun"}
+
+VALID_RELAX = {"bwrap", "all"}
 
 
 def _color(code: str) -> str:
@@ -54,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     mode = "run"
     prompt = os.environ.get("SIEVEBOX_PROMPT", "false") == "true"
     verbose = False
+    relaxed: set[str] = set()
     positional: list[str] = []
 
     def set_mode(new: str) -> None:
@@ -81,6 +86,15 @@ def main(argv: list[str] | None = None) -> int:
             prompt = True
         elif a in ("-v", "--verbose"):
             verbose = True
+        elif a == "--raw":
+            relaxed.add("all")
+        elif a.startswith("--relax="):
+            for val in a[len("--relax="):].split(","):
+                val = val.strip()
+                if val not in VALID_RELAX:
+                    _err(f"invalid --relax value '{val}' (valid: {', '.join(sorted(VALID_RELAX))})")
+                    return 2
+                relaxed.add(val)
         elif a == "--":
             positional = argv[i + 1:]
             break
@@ -117,17 +131,30 @@ def main(argv: list[str] | None = None) -> int:
     comp = compose_mod.compose(cfg, target, here=here, home=home)
 
     if mode == "status":
-        return _handle_status(cfg, target, comp)
+        return _handle_status(cfg, target, comp, relaxed)
+
+    bwrap_off = "bwrap" in relaxed or "all" in relaxed
+
+    if mode == "discover" and bwrap_off:
+        _err("--discover requires the sandbox; cannot use with --relax=bwrap or --raw.")
+        return 1
 
     # run / dryrun / discover share composition + invocation assembly
-    if comp.home_violation and mode in ("run", "discover"):
+    if bwrap_off and mode == "dryrun":
+        print(" ".join(_quote(t) for t in positional))
+        return 0
+
+    if not bwrap_off and comp.home_violation and mode in ("run", "discover"):
         _err("Cannot run from $HOME. Change to a project-specific directory and rerun.")
         return 1
     if not shutil.which(target):
         print(f"Warning: '{target}' not found on PATH; execution may fail.", file=sys.stderr)
-    if mode in ("run", "discover") and not shutil.which("bwrap"):
+    if mode in ("run", "discover") and not bwrap_off and not shutil.which("bwrap"):
         _err("bubblewrap ('bwrap') not found on PATH; install it to run sandboxes.")
         return 1
+
+    if bwrap_off:
+        os.execvp(target, positional)
 
     script = exec_mod.build_exec_cmd(comp.color, comp.shell_inits)
     # arg0 = target basename (drives the conda check); the full positional
@@ -224,7 +251,8 @@ def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
     return 0
 
 
-def _handle_status(cfg, target: str, comp) -> int:
+def _handle_status(cfg, target: str, comp, relaxed: set[str] | None = None) -> int:
+    relaxed = relaxed or set()
     print(f"Sievebox status for: {target}")
     print(f"  Config files:       {', '.join(str(p) for p in cfg.paths)}")
     print(f"  Declared modules:   {' '.join(comp.declared_modules)}")
@@ -233,6 +261,9 @@ def _handle_status(cfg, target: str, comp) -> int:
     print(f"  Network access:     {'enabled' if comp.network else 'disabled'}")
     state = "mounted" if comp.here_mounted else "not mounted"
     print(f"  Workspace ($HERE):  {state} ({comp.here})")
+    if relaxed:
+        measures = ", ".join(sorted(relaxed))
+        print(f"  Relaxed measures:   {measures}")
     print(f"  bwrap arg count:    {len(comp.bwrap_args)}")
     print()
     print("  Grants by module:")
