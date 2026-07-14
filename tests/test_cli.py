@@ -25,8 +25,9 @@ def _base_yaml() -> dict:
         "modules": {
             "node": {"setenv": ["PNPM_HOME"],
                      "filesystem": {"ro": ["~/.npmrc"], "rw": ["~/.npm"]}},
+            "network": {"raw_args": [["--share-net"]]},
         },
-        "apps": {"npm": {"modules": ["node"], "color": "226", "network": True}},
+        "apps": {"npm": {"modules": ["node", "network"], "color": "226"}},
     }
 
 

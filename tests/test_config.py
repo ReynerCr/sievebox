@@ -28,9 +28,10 @@ def _base_yaml() -> dict:
                 "filesystem": {"ro": ["~/.npmrc"], "rw": ["~/.npm", "~/.cache/pnpm"]},
             },
             "gui": {"sockets": ["wayland"]},
+            "network": {"raw_args": [["--share-net"]]},
         },
         "apps": {
-            "npm": {"modules": ["node"], "color": "226", "network": True, "env": {"FOO": "bar"}},
+            "npm": {"modules": ["node", "network"], "color": "226", "env": {"FOO": "bar"}},
         },
     }
 
@@ -58,7 +59,7 @@ def test_deep_merge_app_changes_color(tmp_path):
     })
     cfg = load_config([base, dropin])
     assert cfg.apps["npm"].color == "999"
-    assert cfg.apps["npm"].network is True
+    assert "network" in cfg.apps["npm"].modules
 
 
 def test_deep_merge_module_dedup(tmp_path):
@@ -78,8 +79,8 @@ def test_deep_merge_app_adds_modules(tmp_path):
         "apps": {"npm": {"modules": ["gui"]}},
     })
     cfg = load_config([base, dropin])
-    assert cfg.apps["npm"].modules == ["node", "gui"]
-    assert cfg.apps["npm"].network is True
+    assert cfg.apps["npm"].modules == ["node", "network", "gui"]
+    assert "network" in cfg.apps["npm"].modules
 
 
 def test_deep_merge_app_merges_env(tmp_path):
@@ -114,14 +115,14 @@ def test_override_mode_replaces_app_entirely(tmp_path):
     base = _write(tmp_path / "base.yaml", _base_yaml())
     dropin = _write(tmp_path / "drop.yaml", {
         "apps": {
-            "npm": {"merge": "override", "modules": ["gui"], "color": "100", "network": False},
+            "npm": {"merge": "override", "modules": ["gui"], "color": "100"},
         },
     })
     cfg = load_config([base, dropin])
     a = cfg.apps["npm"]
     assert a.modules == ["gui"]
     assert a.color == "100"
-    assert a.network is False
+    assert "network" not in a.modules
     assert a.env == {}
 
 
@@ -130,7 +131,7 @@ def test_override_mode_replaces_app_entirely(tmp_path):
 def test_default_color_when_app_has_no_color(tmp_path):
     base = _write(tmp_path / "base.yaml", {
         "modules": {"gui": {"sockets": ["wayland"]}},
-        "apps": {"testapp": {"modules": ["gui"], "network": True}},
+        "apps": {"testapp": {"modules": ["gui"]}},
     })
     cfg = load_config([base])
     comp = compose(cfg, "testapp", here="/tmp", home="/home/user")
@@ -240,7 +241,7 @@ def test_raw_args_deep_merged(tmp_path):
         "modules": {
             "custom": {"raw_args": [["--share-net"]]},
         },
-        "apps": {"npm": {"modules": ["custom"], "color": "226", "network": True}},
+        "apps": {"npm": {"modules": ["custom"], "color": "226"}},
     })
     dropin = _write(tmp_path / "drop.yaml", {
         "modules": {

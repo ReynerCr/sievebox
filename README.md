@@ -34,9 +34,9 @@ own modules and app overrides in `~/.config/sievebox/profiles.d/personal.yaml`.
 ### Merge semantics
 
 When a drop-in defines a module or app that already exists in the base, the
-entries are merged. The default is **deep-merge**: scalars (color, network, …)
-are later-wins, lists (filesystem paths, modules, setenv, …) are appended with
-dedup, and dicts (env) are merged per-key.
+entries are merged. The default is **deep-merge**: scalars (color, allow_home, …)
+are later-wins, lists (filesystem paths, modules, setenv, raw_args, …) are
+appended with dedup, and dicts (env) are merged per-key.
 
 To replace a base entry entirely, set `merge: override`:
 
@@ -165,10 +165,9 @@ drives the prompt identity with `root` (defaults to the first module):
 ```yaml
 apps:
   mytool:
-    modules: [node, webdev, mytool]
+    modules: [node, webdev, network, mytool]
     root: mytool
     color: 208          # optional; defaults to engine color (39, bright cyan)
-    network: true       # default: false
     allow_home: true    # default: false
 ```
 
@@ -192,7 +191,8 @@ The base allowlist (`HOME`, `PATH`, `TERM`, locale/display vars, …) lives in
 Per-app in the YAML:
 - `allow_home: true`: allows the app to start directly in `$HOME` (also skips
   binding `$HERE`). By default running from `$HOME` is refused as a footgun.
-- `network: true`: grants network access. Default is denied.
+- Network access: include the `network` module in the app's `modules` list.
+  Default is denied (no network module = no `--share-net`).
 
 ### A note on D-Bus / X11
 

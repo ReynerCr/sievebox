@@ -27,9 +27,9 @@ _MODULE_KEYS = {"extends", "setenv", "shell_init", "filesystem", "sockets", "dev
 # App fields that are lists (append+dedup on deep-merge).
 _APP_LIST_FIELDS = ("modules",)
 # App fields that are scalars (later-wins on deep-merge).
-_APP_SCALAR_FIELDS = ("root", "color", "network", "allow_home")
+_APP_SCALAR_FIELDS = ("root", "color", "allow_home")
 # All valid keys on an app entry (after merge is stripped).
-_APP_KEYS = {"modules", "root", "color", "network", "allow_home", "env"}
+_APP_KEYS = {"modules", "root", "color", "allow_home", "env"}
 
 VALID_MERGE_MODES = {"deep", "override"}
 
@@ -57,7 +57,6 @@ class App:
     modules: list[str] = field(default_factory=list)
     root: str | None = None
     color: str = ""
-    network: bool = False
     allow_home: bool = False
     env: dict[str, str] = field(default_factory=dict)
 
@@ -66,7 +65,6 @@ class App:
 class Core:
     args: list[list[str]] = field(default_factory=list)
     setenv: list[str] = field(default_factory=list)
-    network: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -256,7 +254,6 @@ def load_config(paths: list[Path]) -> Config:
     cfg.core = Core(
         args=[[str(t) for t in d] for d in (core_raw.get("args") or [])],
         setenv=[str(s) for s in (core_raw.get("setenv") or [])],
-        network=[[str(t) for t in d] for d in (core_raw.get("network") or [])],
     )
 
     for name, spec in (merged.get("modules") or {}).items():
@@ -281,7 +278,6 @@ def load_config(paths: list[Path]) -> Config:
             modules=_as_list(spec.get("modules")),
             root=spec.get("root"),
             color=str(spec.get("color", "")),
-            network=bool(spec.get("network", False)),
             allow_home=bool(spec.get("allow_home", False)),
             env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
         )
