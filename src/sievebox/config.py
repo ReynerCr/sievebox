@@ -192,36 +192,6 @@ def _merge_section(base_section: dict, overlay_section: dict,
     return result
 
 
-def _expand_app_keys(raw: dict, path: Path) -> dict:
-    """Expand comma-separated app keys into individual entries.
-
-    A key like "npm, pnpm, yarn" produces three separate entries with identical
-    specs. Expansion happens per-file before merging, so a drop-in can override
-    a single expanded entry by its plain name. A name that already exists as a
-    separate key in the same file (or appears twice in comma lists) is an error.
-    """
-    apps = raw.get("apps")
-    if not apps or not isinstance(apps, dict):
-        return raw
-    expanded: dict = {}
-    for key, spec in apps.items():
-        names = [n.strip() for n in key.split(",")]
-        for name in names:
-            if not name:
-                raise ConfigError(
-                    f"{path}: app key '{key}' contains an empty name"
-                )
-            if name in expanded:
-                raise ConfigError(
-                    f"{path}: app '{name}' registered twice in the same file "
-                    f"(via comma key or duplicate key)"
-                )
-            expanded[name] = spec
-    raw = dict(raw)
-    raw["apps"] = expanded
-    return raw
-
-
 _GLOB_CHARS = set("*?[")
 
 
@@ -229,25 +199,35 @@ def _is_glob_pattern(name: str) -> bool:
     return any(c in name for c in _GLOB_CHARS)
 
 
-def _split_glob_keys(raw: dict, path: Path) -> tuple[dict, dict]:
-    """Separate glob-pattern app keys from exact keys.
+def _normalize_app_keys(raw: dict, path: Path) -> tuple[dict, dict]:
+    """Expand comma-separated keys and separate glob patterns in one pass.
 
-    Returns (raw_with_exact_only, globs). Glob keys are stored separately and
-    matched at lookup time via fnmatch, in declaration order.
+    Returns (exact, globs). Comma keys like "npm, pnpm" produce individual
+    entries with identical specs. Keys containing glob chars (*?[]) go into
+    globs; the rest go into exact. Duplicate names within the same file (via
+    comma expansion or duplicate keys) are an error. Expansion happens per-file
+    before merging, so drop-ins can override individual expanded entries.
     """
     apps = raw.get("apps")
     if not apps or not isinstance(apps, dict):
-        return raw, {}
+        return {}, {}
     exact: dict = {}
     globs: dict = {}
     for key, spec in apps.items():
-        if _is_glob_pattern(key):
-            globs[key] = spec
-        else:
-            exact[key] = spec
-    raw = dict(raw)
-    raw["apps"] = exact
-    return raw, globs
+        names = [n.strip() for n in key.split(",")]
+        for name in names:
+            if not name:
+                raise ConfigError(
+                    f"{path}: app key '{key}' contains an empty name"
+                )
+            target = globs if _is_glob_pattern(name) else exact
+            if name in target:
+                raise ConfigError(
+                    f"{path}: app '{name}' registered twice in the same file "
+                    f"(via comma key or duplicate key)"
+                )
+            target[name] = spec
+    return exact, globs
 
 
 def _merge_raw(base: dict, overlay: dict) -> dict:
@@ -319,11 +299,12 @@ def load_config(paths: list[Path]) -> Config:
             raise ConfigError(f"{path}: invalid YAML: {e}") from e
         if not isinstance(raw, dict):
             raise ConfigError(f"{path}: top level must be a mapping")
-        raw = _expand_app_keys(raw, path)
-        raw, globs = _split_glob_keys(raw, path)
+        exact_apps, glob_apps = _normalize_app_keys(raw, path)
+        raw = dict(raw)
+        raw["apps"] = exact_apps
         merged = _merge_raw(merged, raw)
         merged_globs = _merge_section(
-            merged_globs, globs,
+            merged_globs, glob_apps,
             _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
         )
 
