@@ -1,65 +1,104 @@
 # Sievebox
 
-A small bubblewrap (`bwrap`) wrapper that runs your tools inside a
-locked-down sandbox. It keeps a configured set of **core permissions** (fonts,
-theming, display, …) plus **per-tool permission bundles** ("modules"), combines
-the ones a given app needs, and launches the app in a fresh sandbox with some
-shiny prompts and indicators.
+A small bubblewrap (`bwrap`) wrapper for Linux that runs your tools inside a
+locked-down sandbox. The idea is Flatpak-style declarative sandboxing for
+developer tools, but without packaging apps or bundling their own copies of
+system libraries: apps reuse what's already installed on the host, and
+sievebox only restricts what they can reach.
 
-It ships with base profiles for Conda, Node (npm, pnpm, yarn, bun, node, npx),
+The model is three pieces. **Core permissions** are the always-on floor every
+sandbox gets (fonts, theming, display, …), defined once and locked so a drop-in
+can't relax it. **Modules** are named, reusable permission bundles (filesystem
+binds, sockets, devices, env vars, raw bwrap directives) that can `extends` each
+other, e.g. `node`, `network`, `conda`. An **app** is a binary mapped to a list
+of modules plus a few per-app knobs, e.g. `npm` -> `[node, network]`. Run an app
+and sievebox composes its modules on top of core and launches it in a fresh
+sandbox with some shiny prompts and indicators that tells you that the sandbox
+is active.
+
+It ships with base profiles for Conda, Node (node, npm, pnpm, npx, yarn, bun),
 Rust, and a generic shell. Personal profiles (agents, specific tools) are added
 via drop-in files (see below).
 
-## The files
+You get repeatable, auditable sandboxes defined in YAML instead of ad-hoc shell
+scripts. Declare what an app can reach once, then reuse it everywhere.
+
+It's especially useful for AI agent harnesses that don't natively sandbox their
+tool calls, or when you want a single locked-down baseline shared across every
+harness you run. It also keeps tools like Node.js from wandering into `$HOME` or
+leaking host environment variables they don't need.
+
+## Inspirations
+
+Sievebox sits between manual `bwrap` invocations and full container/flatpak
+setup: declarative, profile-driven, easy to extend without writing complex
+shell scripts.
+
+The design draws from:
+
+- [**bubblewrap**](https://github.com/containers/bubblewrap): the sandbox
+  primitive sievebox builds on. Unprivileged user namespaces, filesystem binds,
+  `--clearenv`, `--unshare-all`, etc.
+- [**Flatpak**](https://github.com/flatpak/flatpak): declarative permissions
+  as metadata, portal-mediated access to the outside world (file chooser,
+  notifications), and a proven seccomp denylist. The module/profile model in
+  sievebox is inspired by Flatpak's permission declarations.
+
+The goal is to gradually bring missing, appropriate ideas from these projects
+into sievebox as the engine grows.
+
+## Requirements
+
+- **Python 3.9+**: stdlib only, no third-party packages. The engine uses
+  `from __future__ import annotations` and modern type hints. Tested on
+  3.14; any 3.9+ should work.
+- **Bubblewrap (`bwrap`)**: the sandbox primitive. Needs `--unshare-all`,
+  `--tmpfs`, `--bind`, `--ro-bind`, `--dev`, `--proc`, `--setenv`,
+  `--symlink`, `--new-session`. Tested on 0.11.0; older versions with those
+  flags should work.
+- **Linux kernel** with unprivileged user namespaces enabled for bubblewrap.
+  Some distros gate this behind `sysctl kernel.unprivileged_userns_clone=1`
+  or `kernel.apparmor_restrict_unprivileged_userns=0`.
+- **strace**: only needed for `--discover`. Any version with
+  `-e trace=%file` support. Tested on 7.1.
+
+## Installation
+
+Just the usual stuff, clone the repository and then run the engine via the
+`bin/sievebox` script. You can add the `bin` folder into your `$PATH` env
+variable or symlink the runner into your preferred folder that is already on
+your `$PATH` (like `~/.local/bin`).
+
+## Quickstart
+
+```bash
+$ sievebox --list            # see what ships and each app's modules
+$ sievebox bash              # run a registered app in the sandbox
+$ sievebox --dry-run npm     # show the composed bwrap command without running
+```
+
+## Security posture
+
+Sievebox bounds what well-behaved or buggy apps can reach (keeps them off
+`$HOME`, strips host env via `--clearenv`, exposes only what their modules
+grant). It is not a boundary against a targeted exploit. It inherits
+bubblewrap's limits, and bubblewrap's own warning applies: everything mounted
+into the sandbox can potentially escalate privileges. Treat it as another
+layer, not a vault. See [Limitations](#limitations) for the tradeoffs.
+
+## Files
 
 - **`bin/sievebox`**: thin entry point on `$PATH`. Delegates to the Python
   package under `src/sievebox/`.
 - **`src/sievebox/`**: the engine (CLI, config loader, composer, discovery).
+  See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a module-by-module breakdown.
 - **`sievebox-profiles.yaml`**: the base configuration (data). All the shipped
-  modules, per-app routing, and host policy knobs. **This is the file that needs
-  edits to add new base profiles.**
-
-## Config loading
-
-Profiles are loaded from multiple files, merged in this order:
-
-1. **Base**: `sievebox-profiles.yaml` next to the repo root (or
-   `${XDG_CONFIG_HOME:-~/.config}/sievebox/profiles.yaml` if not found there).
-2. **Drop-ins**: `~/.config/sievebox/profiles.d/*.yaml`, sorted alphabetically.
-3. **`$SIEVEBOX_CONFIG`**: if set, applied last as a final override.
-
-This lets you keep personal profiles separate from the shipped base. Put your
-own modules and app overrides in `~/.config/sievebox/profiles.d/personal.yaml`.
-
-### Merge semantics
-
-When a drop-in defines a module or app that already exists in the base, the
-entries are merged. The default is **deep-merge**: scalars (color, allow_home, …)
-are later-wins, lists (filesystem paths, modules, setenv, raw_args, …) are
-appended with dedup, and dicts (env) are merged per-key.
-
-To replace a base entry entirely, set `merge: override`:
-
-```yaml
-modules:
-  node:
-    merge: override
-    color: 999
-    filesystem:
-      rw: [~/.custom-node]
-```
-
-`core:` is first-wins; the security floor cannot be relaxed from a drop-in.
+  modules, per-app routing, and host policy knobs.
 
 ## Using it
 
-Run a registered app (e.g. `bash`) inside the sandbox:
-
-```bash
-$ sievebox bash
-```
-
-It prints the real path and the app being run, then executes it:
+When you run `sievebox bash` (as in the quickstart above), it prints the host
+path and the app being executed, then drops you into the sandbox:
 
 ```bash
 ======================================================
@@ -67,10 +106,11 @@ It prints the real path and the app being run, then executes it:
  Host Path:  /path/to/your/current/shell/session
  Executing:  bash
 ======================================================
-
-# app execution: runs a new bash shell where you can run anything the sandbox allows
 [sievebox] /path/to/your/current/shell/session$
 ```
+
+The new shell can run anything the sandbox allows. The colored `[sievebox]`
+prefix in the prompt tells you the sandbox is active.
 
 Anything after the binary name is passed straight to the app, so
 `sievebox node --help` shows *node's* help, not sievebox's. Flags are
@@ -80,15 +120,17 @@ only recognized **before** the binary name.
 
 - `--list [binary...]`: with no argument, list every registered binary and its
   modules. With one or more binaries, show just their modules, expanded through
-  inheritance, plus the declared list and the "root" (identity) module:
+  inheritance:
 
   ```bash
   $ sievebox --list npm
   Modules for 'npm':
-    Declared:   node
-    Effective:  node   (inheritance-expanded)
-    Root:       node
+    Declared:   node network webdev
+    Effective:  node network gui audio gpu rust specific_projects webdev   (inheritance-expanded)
   ```
+
+  Output reflects your merged configuration, including any personal drop-ins
+  under `~/.config/sievebox/profiles.d/`.
 
 - `--status <binary>`: show the resolved config for an app (modules, network
   decision, whether `$HERE` is mounted, bwrap arg count) **without running it**.
@@ -97,18 +139,20 @@ only recognized **before** the binary name.
   permissions (see below). Needs `strace`.
 - `-p, --prompt`: when a tool's optional bind directory is missing, offer to
   create it (also via `SIEVEBOX_PROMPT=true`). Default is to skip.
-- `--relax=<measure>`: relax a security measure. Accepted values:
-  - `bwrap`: no namespace isolation, plain exec. The app runs directly on the
-    host with no sandbox, no wrapper script, no banner.
-  - `filesystem`: full host filesystem access (`--bind / /`). Namespace
-    isolation, env isolation, and network policy remain. Module-level
+- `--relax=<measure1, measure2,...>`: relax a list of comma-separated security measures. Accepted values:
+  - `bwrap`: no namespace isolation, plain exec. As of today, bubblewrap is the
+    only security tool used so if disabled, the app runs directly on the host
+    with no sandbox at all. That also means no wrapper script and no banner.
+  - `filesystem`: full host filesystem access (`--bind / /`) in the bwrap.
+    Namespace isolation, env isolation, and network policy remain. Module-level
     filesystem/device/socket binds are skipped.
-  - `ro-filesystem`: read-only host filesystem (`--ro-bind / /`). The app can
-    read any file on the host but can only write to paths the profile explicitly
+  - `ro-filesystem`: read-only host filesystem (`--ro-bind / /`) in the bwrap 
+    wrapper script. The app can read any file on the host but can only write to paths the profile explicitly
     grants via module rw binds. Namespace isolation, env isolation, and network
     policy remain.
-  - `all`: shorthand for `--raw` (no bwrap at all).
-  Multiple values can be comma-separated: `--relax=bwrap,filesystem`.
+  - `all`: relax every implemented measure. Today it is equivalent to
+    `relax=bwrap`. When more measures land (e.g. `seccomp` or `rlimits`), `all`
+    will expand to cover them too.
 - `--raw`: shorthand for `--relax=all`.
 - `--modules=<list>`: append modules to the app's declared list at runtime,
   comma-separated. Injected modules go through the same `extends` expansion as
@@ -116,94 +160,12 @@ only recognized **before** the binary name.
   `sievebox --modules=network,gpu mytool`.
 - `-h, --help`: show the usage info.
 
-## Overriding binaries
+## Configuration
 
-For ease of use and a bit of extra safety (so you don't accidentally run an
-executable *outside* a sandbox), you can set up shell overrides that wrap your
-tools in `sievebox`, by shadowing the real binaries on your `$PATH` from your
-`~/.bashrc` (or similar).
-
-In the dev folder I keep my `~/.bashrc` extensions; specifically `10-override.sh`
-holds my overrides and works as a template for new ones. After that, just run the
-app normally and the override runs it wrapped, confirm by checking that the
-sandbox banner is printed.
-
-Note: this isn't a catch-all. If a command is invoked through another (e.g. under
-`strace`, or by its full path instead of the bare name) the override is bypassed.
-
-## Extending the profiles and apps
-
-The base config lives in `sievebox-profiles.yaml`. Personal modules and app
-overrides go in `~/.config/sievebox/profiles.d/*.yaml`. The top-level sections
-in any profile file are `core:`, `modules:`, and `apps:`.
-
-### Add a module (a permission bundle)
-
-A module is a YAML mapping under `modules:` with a name and capabilities:
-
-```yaml
-modules:
-  mytool:
-    filesystem:
-      rw: [~/.config/mytool]
-      ro: [~/.mytoolrc]
-```
-
-- `filesystem.ro` / `filesystem.rw` are lists of paths (`~` and `$VAR` expanded,
-  existence-gated with `-try` by default).
-- `sockets`: named host sockets (`wayland`, `pulse`, `pipewire`).
-- `devices`: device names under `/dev` (e.g. `dri`).
-- `extends`: list of base modules to inherit binds from (pulled in first, deduped,
-  cycle-protected).
-- `setenv`: env var names to forward past `--clearenv`.
-- `shell_init`: an optional shell snippet fused into the sandbox launch (used
-  e.g. by the Conda module to auto-activate an env). The app's color is
-  available as `$SIEVEBOX_COLOR` (a 256-color code) for use in `tput` or ANSI
-  escapes.
-
-### Route an app to its modules
-
-Map a binary to a module list under `apps:`, and optionally pick which module
-drives the prompt identity with `root` (defaults to the first module):
-
-```yaml
-apps:
-  mytool:
-    modules: [node, webdev, network, mytool]
-    root: mytool
-    color: 208          # optional; defaults to engine color (39, bright cyan)
-    allow_home: true    # default: false
-```
-
-### Forward an env var past `--clearenv`
-
-The sandbox starts from an empty environment and only re-introduces an explicit
-allowlist (so host secrets like API tokens don't leak in). To let a module pass
-one of its own variables through, add it to `setenv`:
-
-```yaml
-modules:
-  node:
-    setenv: [PNPM_HOME]
-```
-
-The base allowlist (`HOME`, `PATH`, `TERM`, locale/display vars, …) lives in
-`core.setenv` in the YAML. **Never put secrets in either.**
-
-### Host policy knobs
-
-Per-app in the YAML:
-- `allow_home: true`: allows the app to start directly in `$HOME` (also skips
-  binding `$HERE`). By default running from `$HOME` is refused as a footgun.
-- Network access: include the `network` module in the app's `modules` list.
-  Default is denied (no network module = no `--share-net`).
-
-### A note on D-Bus / X11
-
-Both are a security risk if mishandled. The shipped profiles don't enable D-Bus
-(use a proxy that mediates access if you need it, which is a common practice), and because
-of `--clearenv` things like `XAUTHORITY` aren't forwarded, which sidesteps the
-usual X11 problems. Display support here is via the Wayland socket.
+Profiles are loaded from a base file plus drop-ins and merged at runtime.
+Adding your own modules, routing apps, merge semantics, env forwarding, and
+host policy knobs are covered in
+[`docs/PROFILES.md`](docs/PROFILES.md).
 
 ## Discovering missing permissions (`--discover`)
 
@@ -227,14 +189,13 @@ The summary groups findings by how actionable they are, roughly:
 - **CREATE/WRITE**: the app tried to write somewhere read-only (usually wants a
   read-write `--bind`); these are the strongest signal.
 - **App data/config candidates**: the real stuff you probably want to bind.
-- then well-understood noise: `node_modules` lookups, regenerable **caches**,
+- **Well-understood noise**: `node_modules` lookups, regenerable **caches**,
   **ephemeral tmpfs** (don't bind these, they're regenerated), system/libc
   config, and `$PATH` binary lookups.
 
 Every path is tagged **`[exists]`** (it's on the host, so a bind can fix it) or
 **`[missing]`** (the app is probing for something not on disk, binding won't
-help); `[exists]` rows are listed first. If there are write/app candidates, it
-also offers to print paste-ready `--bind` lines for your profile.
+help). `[exists]` rows are listed first for better usability.
 
 Before tracing, `--discover` also prints a quick **project-detection** heads-up
 (also saved to `detect.txt`): it looks at marker files in the current directory
@@ -242,7 +203,7 @@ Before tracing, `--discover` also prints a quick **project-detection** heads-up
 modules seem to be missing one (e.g. you're in a conda project but the profile
 has no conda module). Disable with `SIEVEBOX_AUTO_DETECT=false`.
 
-### Tuning discovery
+### Tuning knobs
 
 All env-overridable (sensible defaults in `src/sievebox/discovery.py`):
 
@@ -250,6 +211,60 @@ All env-overridable (sensible defaults in `src/sievebox/discovery.py`):
 - `DISCOVERY_SYS_PATHS`, `DISCOVERY_CACHE_PATTERNS`, `DISCOVERY_DEPS_PATTERNS`:
   the classification rule table (system config / cache / deps).
 - `SIEVEBOX_DETECT_RULES`: the `marker|type|module` table for project detection.
+
+## Shell overrides
+
+For convenience and a bit of extra safety (so you don't accidentally run an
+executable *outside* a sandbox), you can set up shell functions that wrap your
+tools in `sievebox`, shadowing the real binaries on your `$PATH` from your
+`~/.bashrc` (or similar).
+
+A typical override is a one-liner in a sourced file (e.g. `~/.bashrc.d/`):
+
+```bash
+npm() { sievebox npm "$@"; }
+```
+
+After sourcing, running `npm` invokes the sandboxed version. Confirm by
+checking that the sandbox banner is printed.
+
+This isn't a catch-all. If a command is invoked through another (e.g. under
+`command`, `strace`), by an alias, or by its full path instead of the bare name, the override
+is bypassed.
+
+## Roadmap
+
+The sandbox is functional today only with bubblewrap. Intended directions for
+hardening and capabilities that may be implemented are:
+
+- **rlimits**: resource caps (address space, RSS, nproc, fsize) to bound blast
+  radius of runaway or compromised apps.
+- **Seccomp syscall filtering**: default denylist (Flatpak-style) for all
+  profiles, opt-in allow-lists for well-understood ones.
+- **D-Bus proxy + portals**: mediated outside-world access via `xdg-dbus-proxy`
+  and XDG portals (file chooser, notifications) instead of broad binds.
+- **Writable app-data persistence**: per-app private writable XDG dirs via
+  overlays, so an app can create new config/data entries without exposing
+  siblings.
+
+## Limitations
+
+- **Platform**: Linux only. The sandboxing stack (bwrap, user namespaces) is
+  Linux-specific, so no other OS is supported and Windows isn't planned.
+- **Trust model**: sievebox inherits the limits of bwrap and the kernel. It is a
+  layer that narrows what an app can reach, not a vault against targeted
+  exploitation. As bubblewrap's devs put it: "Everything mounted into the
+  sandbox can potentially be used to escalate privileges."
+- **Host-package dependency** (by design): unlike Flatpak, which ships vetted
+  runtimes with their own libraries, sievebox apps reuse what's already
+  installed on the host. That's the point (no bundling, no reinstalling), but
+  it means your trust boundary is the host's installed set, not a curated
+  runtime. A compromised or buggy system lib is reachable from inside.
+- **Self-sandboxing apps**: apps that already sandbox themselves (Flatpak apps,
+  browsers, etc.) may end up limited or fail outright under sievebox. Prefer
+  the app's own sandbox in those cases; its developers/packagers usually know
+  how to sandbox it better than a generic wrapper. See also the note on D-Bus
+  / X11 in [`docs/PROFILES.md`](docs/PROFILES.md#a-note-on-d-bus--x11).
 
 ## Development
 
@@ -259,5 +274,7 @@ make lint    # syntax-check Python files
 make clean   # remove caches
 ```
 
-The bash engine is archived in `archive/`. The Python engine under
-`src/sievebox/` is the sole active engine.
+The sandbox engine was developed first in bash (originated from a script with
+some basic profiles) and then ported into Python. This bash engine is archived
+in `archive/`. The Python engine under `src/sievebox/` is the sole active
+engine, run via the `bin/sievebox` script.
