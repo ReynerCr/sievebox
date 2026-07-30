@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
+from . import fdargs as fdargs_mod
 from .bwrap import arity, category
 from .config import DEFAULT_COLOR, ConfigError, find_app, find_config_files, flatten_modules, load_config
 
@@ -192,15 +193,21 @@ def main(argv: list[str] | None = None) -> int:
             "SIEVEBOX_STATE_DIR",
             os.path.join(os.environ.get("XDG_STATE_HOME", home + "/.local/state"), "sievebox"),
         )
-        return discovery_mod.run_discovery(
-            cfg, target, invocation, here, home, state_dir,
+        fd = fdargs_mod.write_args_fd(comp.bwrap_args + remount)
+        bwrap_argv = ["--args", str(fd), "bash", "-c", script, target, *positional]
+        rc = discovery_mod.run_discovery(
+            cfg, target, bwrap_argv, comp.bwrap_args + remount, (fd,),
+            here, home, state_dir,
             comp.effective_modules,
         )
+        os.close(fd)
+        return rc
 
     if prompt:
         _prompt_create(comp.bwrap_args)
     _banner(comp, target)
-    os.execvp("bwrap", ["bwrap", *invocation])
+    fd = fdargs_mod.write_args_fd(comp.bwrap_args + remount)
+    os.execvp("bwrap", ["bwrap", "--args", str(fd), "bash", "-c", script, target, *positional])
 
 
 def _quote(tok: str) -> str:

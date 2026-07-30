@@ -403,10 +403,11 @@ def _section(lines: list[str], failures: list[dict],
 
 # --- Orchestration ------------------------------------------------------------
 
-def run_discovery(cfg, target: str, invocation: list[str],
+def run_discovery(cfg, target: str, bwrap_argv: list[str],
+                  bwrap_flat: list[str], pass_fds: tuple[int, ...],
                   here: str, home: str, state_dir: str,
                   effective_deps: list[str]) -> int:
-    """Run strace+bwrap, classify, summarize. Returns exit code."""
+    """Run strace+bwrap via fd-based argv, classify from flat args, summarize. Returns exit code."""
     if not _which("strace"):
         print("Error: --discover requires 'strace' (not found on PATH).", file=sys.stderr)
         return 1
@@ -427,8 +428,8 @@ def run_discovery(cfg, target: str, invocation: list[str],
     tmpfs_path = run_dir / "tmpfs_paths.txt"
     detect_path = run_dir / "detect.txt"
 
-    bound = extract_bound_paths(invocation)
-    tmpfs = extract_tmpfs_paths(invocation)
+    bound = extract_bound_paths(bwrap_flat)
+    tmpfs = extract_tmpfs_paths(bwrap_flat)
     bound_path.write_text("\n".join(sorted(bound)) + "\n" if bound else "")
     tmpfs_path.write_text("\n".join(sorted(tmpfs)) + "\n" if tmpfs else "")
 
@@ -444,7 +445,8 @@ def run_discovery(cfg, target: str, invocation: list[str],
     rc = 0
     try:
         subprocess.run(
-            ["strace", "-f", "-e", "trace=%file", "-o", str(trace), "bwrap", *invocation],
+            ["strace", "-f", "-e", "trace=%file", "-o", str(trace), "bwrap", *bwrap_argv],
+            pass_fds=pass_fds,
         )
     except subprocess.CalledProcessError as e:
         rc = e.returncode

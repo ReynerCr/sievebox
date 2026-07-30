@@ -176,6 +176,14 @@ def test_dryrun_with_bwrap(monkeypatch, tmp_path):
     assert "bwrap" in out
 
 
+def test_dryrun_shows_expanded_args_not_fd_form(monkeypatch, tmp_path):
+    rc, out, err = _run(["--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--args" not in out
+    assert "--tmpfs /" in out
+    assert "PNPM_HOME" in out
+
+
 def test_discover_with_relax_bwrap_errors(monkeypatch, tmp_path):
     rc, out, err = _run(["--discover", "--relax=bwrap", "npm"], monkeypatch, tmp_path)
     assert rc == 1
@@ -199,3 +207,13 @@ def test_status_no_relaxed_line_by_default(monkeypatch, tmp_path):
     rc, out, err = _run(["--status", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     assert "Relaxed measures:" not in out
+
+
+def test_status_bwrap_arg_count_logical(monkeypatch, tmp_path):
+    rc, out, err = _run(["--status", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "bwrap arg count:" in out
+    # The count should be > 0 and reflect logical rules, not fd args form
+    line = [l for l in out.splitlines() if "bwrap arg count:" in l][0]
+    count = int(line.split(":")[1].strip())
+    assert count > 0
