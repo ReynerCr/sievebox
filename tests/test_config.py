@@ -448,3 +448,104 @@ def test_comma_key_with_glob_mixed(tmp_path):
     assert "foo*" in cfg.app_globs
     assert find_app(cfg, "npm").color == "226"
     assert find_app(cfg, "foo-bar").color == "226"
+
+
+# --- Strict structural validation (branch C) ---
+
+def test_anchor_sharing_top_level_key_ignored_silently(tmp_path):
+    """Unknown top-level keys (e.g. YAML anchor definitions) are silently dropped."""
+    _write(tmp_path / "base.yaml", {
+        "shared_env": {"PATH": "/bin"},
+        "modules": {"m": {"setenv": ["FOO"]}},
+        "apps": {"x": {"modules": ["m"]}},
+    })
+    cfg = load_config([tmp_path / "base.yaml"])
+    assert "m" in cfg.modules
+
+
+def test_anchor_values_referenced_via_yaml_alias(tmp_path):
+    """YAML anchors are resolved by the parser -- referenced values load fine."""
+    # Anchor *s resolves to the scalar string "/some/path".  The anchor
+    # definition key "shared_env" is a top-level unknown key (warn-only).
+    (tmp_path / "base.yaml").write_text("""
+shared_env: &s "/some/path"
+
+modules:
+  m:
+    filesystem:
+      rw:
+        - *s
+
+apps:
+  x:
+    modules: [m]
+    env:
+      MY_PATH: *s
+""")
+    cfg = load_config([tmp_path / "base.yaml"])
+    assert cfg.modules["m"].fs_rw == ["/some/path"]
+    assert cfg.apps["x"].env == {"MY_PATH": "/some/path"}
+
+
+# --- Negative: misplaced keys inside sub-objects ---
+
+def test_filesystem_extends_rejected(tmp_path):
+    _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"filesystem": {"extends": ["base"]}}},
+        "apps": {"x": {"modules": ["m"]}},
+    })
+    with pytest.raises(ConfigError, match="filesystem.*unknown key.*extends"):
+        load_config([tmp_path / "base.yaml"])
+
+
+def test_filesystem_modules_key_rejected(tmp_path):
+    """Putting 'modules' (an app key) inside filesystem is an error."""
+    _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"filesystem": {"modules": ["x"]}}},
+        "apps": {"x": {"modules": ["m"]}},
+    })
+    with pytest.raises(ConfigError, match="filesystem.*unknown key.*modules"):
+        load_config([tmp_path / "base.yaml"])
+
+
+def test_filesystem_as_list_rejected(tmp_path):
+    """filesystem must be a mapping, not a list."""
+    _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"filesystem": ["ro", "/tmp"]}},
+        "apps": {"x": {"modules": ["m"]}},
+    })
+    with pytest.raises(ConfigError, match="filesystem.*must be a mapping"):
+        load_config([tmp_path / "base.yaml"])
+
+
+def test_raw_args_flat_list_rejected(tmp_path):
+    """raw_args must be a list of lists, not a flat list."""
+    _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"raw_args": ["--share-net"]}},
+        "apps": {"x": {"modules": ["m"]}},
+    })
+    with pytest.raises(ConfigError, match="raw_args\[0\].*must be a list"):
+        load_config([tmp_path / "base.yaml"])
+
+
+def test_allow_home_as_string_rejected(tmp_path):
+    _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"x": {"modules": ["m"], "allow_home": "yes"}},
+    })
+    with pytest.raises(ConfigError, match="allow_home.*must be a bool"):
+        load_config([tmp_path / "base.yaml"])
+
+
+def test_env_value_non_string_rejected(tmp_path):
+    _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"x": {"modules": ["m"], "env": {"MY_VAR": 42}}},
+    })
+    with pytest.raises(ConfigError, match="env.*MY_VAR.*must be a string"):
+        load_config([tmp_path / "base.yaml"])
+
+
+# --- Existing negative tests that should keep passing ---
+
+
