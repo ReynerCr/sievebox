@@ -1,0 +1,18 @@
+invalid config (tests/validation/structural-errors.yaml):
+  module 'bad_shell_type': 'shell_init' must be a string
+  module 'bad_extends_type': 'extends' must be a list
+  module 'bad_setenv_type': 'setenv' must be a list
+  module 'bad_sockets_type': 'sockets' must be a list
+  module 'bad_devices_type': 'devices' must be a list
+  module 'bad_fs_list': 'filesystem' must be a mapping
+  module 'bad_fs_key': filesystem has unknown key 'bogus' (valid: ro, rw)
+  module 'bad_fs_value': filesystem.ro must be a list
+  module 'bad_raw_flat': raw_args[0] must be a list
+  module 'bad_raw_item': raw_args[1] must be a list
+  app 'bad_color_type': 'color' must be a string or int
+  app 'bad_allow_home_type': 'allow_home' must be a bool
+  app 'bad_modules_type': 'modules' must be a list
+  app 'bad_env_type': 'env' must be a mapping
+  app 'bad_env_value': env['MY_VAR'] must be a string
+  module 'bad_unknown' has unknown key(s): allow_home, color
+  app 'bad_unknown' has unknown key(s): extends, filesystem

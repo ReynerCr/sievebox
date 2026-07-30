@@ -1,0 +1,100 @@
+# Standalone config exercising edge cases that pass structural validation.
+# Load directly (not as a drop-in):
+#   SIEVEBOX_CONFIG=tests/validation/valid-edge-cases.yaml sievebox status
+#
+# Every entry in this file must load without triggering any structural
+# or semantic validation error.  Run `make test` after changing anything.
+
+modules:
+
+  # Minimal module: no fields set (all defaults)
+  minimal:
+
+  # Inheritance chain: base_one, base_two, chain_end
+  base_one:
+    setenv: [A]
+    filesystem: {ro: [/base/one]}
+
+  base_two:
+    extends: [base_one]
+    setenv: [B]
+    filesystem: {ro: [/base/two]}
+
+  chain_end:
+    extends: [base_two]
+    setenv: [C]
+    filesystem: {rw: [/chain/end]}
+
+  # raw_args with multiple inner lists
+  custom_bwrap:
+    raw_args:
+      - [--share-net]
+      - [--ro-bind-try, /etc/ssl, /etc/ssl]
+      - [--setenv, MY_VAR, value]
+
+  # filesystem with both ro and rw
+  full_fs:
+    filesystem:
+      ro:
+        - /usr/share
+        - /etc/fonts
+      rw:
+        - ~/.cache
+        - ~/.local/share
+
+  # sockets and devices together
+  multimedia:
+    sockets: [wayland, pulse, pipewire]
+    devices: [dri]
+
+  # shell_init as empty string (valid, just a no-op)
+  noop_init:
+    shell_init: ""
+
+  # shell_init with multi-line content
+  custom_init:
+    shell_init: |
+      if [ -n "$MY_VAR" ]; then
+        export OTHER="$MY_VAR"
+      fi
+
+apps:
+
+  # Comma-expanded keys (handled before structural validation)
+  "alpha, beta, gamma":
+    modules: [minimal]
+    color: 100
+    allow_home: true
+    env:
+      FOO: bar
+      BAZ: qux
+
+  # Glob pattern (resolved at lookup, not load)
+  "test-*":
+    modules: [minimal]
+    color: 200
+    env:
+      GLOB_MATCHED: "1"
+
+  # color as string (valid)
+  color_as_string:
+    modules: [minimal]
+    color: "208"
+
+  # color as int (valid)
+  color_as_int:
+    modules: [minimal]
+    color: 208
+
+  # allow_home omitted (defaults to false)
+  defaults_only:
+    modules: [minimal]
+
+  # env with no values
+  empty_env:
+    modules: [minimal]
+    env: {}
+
+  # No modules (caught by semantic validation, not structural: omitted on purpose)
+  # no_modules_app:
+  #   color: 100
