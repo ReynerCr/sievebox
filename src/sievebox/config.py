@@ -16,19 +16,26 @@ DEFAULT_CONFIG_NAME = "sievebox-profiles.yaml"
 # Engine default prompt color (256-color code 39 = bright cyan).
 DEFAULT_COLOR = "39"
 
-# Module fields that are lists (append+dedup on deep-merge).
-_MODULE_LIST_FIELDS = ("extends", "setenv", "fs_ro", "fs_rw", "sockets", "devices", "raw_args")
-# Module fields that are scalars (later-wins on deep-merge).
-_MODULE_SCALAR_FIELDS = ("shell_init",)
-# All valid keys on a module entry (after merge is stripped).
-_MODULE_KEYS = {"extends", "setenv", "shell_init", "filesystem", "sockets", "devices", "raw_args"}
+# Single source of truth for module and app entry structure.
+# Each key maps to {merge, type[, item_type][, value_type]}.
+# merge: "scalar" (later-wins), "list" (append+dedup), "filesystem" (nested
+#   dict with ro/rw list sub-keys), or "env" (nested dict with string values).
+_MODULE_SCHEMA = {
+    "extends":    {"merge": "list",       "type": list},
+    "setenv":     {"merge": "list",       "type": list},
+    "shell_init": {"merge": "scalar",     "type": str},
+    "filesystem": {"merge": "filesystem", "type": dict},
+    "sockets":    {"merge": "list",       "type": list},
+    "devices":    {"merge": "list",       "type": list},
+    "raw_args":   {"merge": "list",       "type": list, "item_type": list},
+}
 
-# App fields that are lists (append+dedup on deep-merge).
-_APP_LIST_FIELDS = ("modules",)
-# App fields that are scalars (later-wins on deep-merge).
-_APP_SCALAR_FIELDS = ("color", "allow_home")
-# All valid keys on an app entry (after merge is stripped).
-_APP_KEYS = {"modules", "color", "allow_home", "env"}
+_APP_SCHEMA = {
+    "modules":    {"merge": "list",   "type": list},
+    "color":      {"merge": "scalar", "type": (str, int)},
+    "allow_home": {"merge": "scalar", "type": bool},
+    "env":        {"merge": "env",    "type": dict, "value_type": str},
+}
 
 VALID_MERGE_MODES = {"deep", "override"}
 
@@ -139,21 +146,30 @@ def _dedup_append(base_list: list, extra: list) -> list:
 
 
 def _deep_merge_entry(base_entry: dict, overlay_entry: dict,
-                      list_fields: tuple, scalar_fields: tuple) -> dict:
+                      schema: dict) -> dict:
     """Deep-merge a single module or app entry.
 
-    Scalars: later-wins. Lists: append+dedup. Dicts (filesystem, env): per-key
-    merge. Unknown keys are a hard error (catches typos in overlays at merge
-    time with the overlay file name, not only later in _check_unknown_keys).
+    Merge strategy is determined by schema[key]["merge"]:
+      scalar     later-wins
+      list       append+dedup
+      filesystem nested dict with ro/rw list sub-keys
+      env        nested dict with per-key scalar merge
+    Unknown keys are a hard error.
     """
-    known_keys = set(scalar_fields) | set(list_fields) | {"filesystem", "env"}
     result = dict(base_entry)
     for key, value in overlay_entry.items():
-        if key in scalar_fields:
+        field = schema.get(key)
+        if field is None:
+            raise ConfigError(
+                f"unknown key '{key}' in overlay (valid: "
+                f"{', '.join(sorted(schema))})"
+            )
+        mode = field["merge"]
+        if mode == "scalar":
             result[key] = value
-        elif key in list_fields:
+        elif mode == "list":
             result[key] = _dedup_append(result.get(key, []), value)
-        elif key == "filesystem":
+        elif mode == "filesystem":
             base_fs = dict(result.get(key) or {})
             for subkey, subval in (value or {}).items():
                 if subkey in ("ro", "rw"):
@@ -161,20 +177,15 @@ def _deep_merge_entry(base_entry: dict, overlay_entry: dict,
                 else:
                     base_fs[subkey] = subval
             result[key] = base_fs
-        elif key == "env":
+        elif mode == "env":
             base_env = dict(result.get(key) or {})
             base_env.update(value or {})
             result[key] = base_env
-        else:
-            raise ConfigError(
-                f"unknown key '{key}' in overlay (valid: "
-                f"{', '.join(sorted(known_keys))})"
-            )
     return result
 
 
 def _merge_section(base_section: dict, overlay_section: dict,
-                   list_fields: tuple, scalar_fields: tuple) -> dict:
+                   schema: dict) -> dict:
     """Merge a section (modules/apps). Per-entry: deep-merge or override."""
     result = dict(base_section)
     for name, entry in overlay_section.items():
@@ -189,7 +200,7 @@ def _merge_section(base_section: dict, overlay_section: dict,
         if mode == "override" or name not in result:
             result[name] = entry
         else:
-            result[name] = _deep_merge_entry(result[name], entry, list_fields, scalar_fields)
+            result[name] = _deep_merge_entry(result[name], entry, schema)
     return result
 
 
@@ -240,13 +251,11 @@ def _merge_raw(base: dict, overlay: dict) -> dict:
     result = dict(base)
     if "modules" in overlay:
         result["modules"] = _merge_section(
-            result.get("modules") or {}, overlay["modules"],
-            _MODULE_LIST_FIELDS, _MODULE_SCALAR_FIELDS,
+            result.get("modules") or {}, overlay["modules"], _MODULE_SCHEMA,
         )
     if "apps" in overlay:
         result["apps"] = _merge_section(
-            result.get("apps") or {}, overlay["apps"],
-            _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
+            result.get("apps") or {}, overlay["apps"], _APP_SCHEMA,
         )
     if "core" not in result and "core" in overlay:
         result["core"] = overlay["core"]
@@ -277,101 +286,77 @@ def _validate_filesystem(fs: dict, entry: str, errs: list[str]) -> None:
             errs.append(f"{entry}: filesystem.{subkey} must be a list")
 
 
-_module_scalar_typechecks = {"shell_init": (str,) }
-_module_list_typechecks = {"extends": (list,), "setenv": (list,),
-                           "sockets": (list,), "devices": (list,)}
-_app_scalar_typechecks = {"color": (str, int), "allow_home": (bool,)}
-_app_list_typechecks = {"modules": (list,)}
-_app_map_typechecks = {"env": (dict,)}
+def _type_name(t: type | tuple) -> str:
+    if isinstance(t, tuple):
+        return " or ".join(_type_name(x) for x in t)
+    if t is dict:
+        return "mapping"
+    if t is str:
+        return "string"
+    return t.__name__
 
 
-def _validate_entry_structure(merged: dict, merged_globs: dict,
-                               paths: list[Path]) -> None:
-    """Reject misplaced/ill-typed keys inside modules and apps.
-
-    Called before _check_unknown_keys (which rejects unknown top-level
-    module/app keys).  Both are applied to the merged dict before
-    constructing dataclasses.
-    """
+def _validate_entry_structure(merged: dict, merged_globs: dict) -> list[str]:
+    """Return a list of type/shape errors inside modules and apps."""
     errs: list[str] = []
 
     for name, spec in (merged.get("modules") or {}).items():
         spec = spec or {}
         label = f"module '{name}'"
-
-        # filesystem must be a mapping with only ro/rw keys
-        if "filesystem" in spec:
-            _validate_filesystem(spec["filesystem"], label, errs)
-
-        # raw_args must be a list of lists
-        if "raw_args" in spec:
-            ra = spec["raw_args"]
-            if not isinstance(ra, list):
-                errs.append(f"{label}: 'raw_args' must be a list")
-            else:
-                for i, d in enumerate(ra):
-                    if not isinstance(d, list):
-                        errs.append(f"{label}: raw_args[{i}] must be a list")
-
-        # Scalar type checks
-        for key, types in _module_scalar_typechecks.items():
-            if key in spec and not isinstance(spec[key], types):
-                errs.append(f"{label}: '{key}' must be a {types[0].__name__}")
-
-        # List type checks
-        for key, types in _module_list_typechecks.items():
-            if key in spec and not isinstance(spec[key], types):
-                errs.append(f"{label}: '{key}' must be a list")
+        for key, field in _MODULE_SCHEMA.items():
+            if key not in spec:
+                continue
+            value = spec[key]
+            if field["merge"] == "filesystem":
+                _validate_filesystem(value, label, errs)
+                continue
+            if not isinstance(value, field["type"]):
+                errs.append(f"{label}: '{key}' must be a {_type_name(field['type'])}")
+                continue
+            if "item_type" in field:
+                for i, item in enumerate(value):
+                    if not isinstance(item, field["item_type"]):
+                        errs.append(f"{label}: {key}[{i}] must be a {_type_name(field['item_type'])}")
 
     for label_prefix, section in (("app", merged.get("apps") or {}),
                                    ("app glob", merged_globs)):
         for name, spec in section.items():
             spec = spec or {}
             label = f"{label_prefix} '{name}'"
+            for key, field in _APP_SCHEMA.items():
+                if key not in spec:
+                    continue
+                value = spec[key]
+                if not isinstance(value, field["type"]):
+                    errs.append(f"{label}: '{key}' must be a {_type_name(field['type'])}")
+                    continue
+                if "value_type" in field:
+                    vt = field["value_type"]
+                    for ek, ev in value.items():
+                        if not isinstance(ev, vt):
+                            errs.append(f"{label}: {key}['{ek}'] must be a {_type_name(vt)}")
 
-            # Scalar type checks
-            for key, types in _app_scalar_typechecks.items():
-                if key in spec and not isinstance(spec[key], types):
-                    errs.append(f"{label}: '{key}' must be a {types[0].__name__}")
-
-            # List type checks
-            for key, types in _app_list_typechecks.items():
-                if key in spec and not isinstance(spec[key], types):
-                    errs.append(f"{label}: '{key}' must be a list")
-
-            # Mapping type checks
-            for key, types in _app_map_typechecks.items():
-                if key in spec and not isinstance(spec[key], types):
-                    errs.append(f"{label}: '{key}' must be a mapping")
-                elif key in spec:
-                    # Check env values are strings
-                    for ek, ev in spec[key].items():
-                        if not isinstance(ev, str):
-                            errs.append(f"{label}: env['{ek}'] must be a string")
-
-    if errs:
-        files = ", ".join(str(p) for p in paths)
-        raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
+    return errs
 
 
-def _check_unknown_keys(merged: dict, merged_globs: dict, paths: list[Path]) -> None:
+def _check_unknown_keys(merged: dict, merged_globs: dict) -> list[str]:
     """Reject unknown keys on module, app, and glob entries."""
     errs: list[str] = []
+    module_keys = set(_MODULE_SCHEMA)
+    app_keys = set(_APP_SCHEMA)
     for name, spec in (merged.get("modules") or {}).items():
         spec = spec or {}
-        unknown = set(spec.keys()) - _MODULE_KEYS
+        unknown = set(spec.keys()) - module_keys
         if unknown:
             errs.append(f"module '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
     for label, section in (("app", merged.get("apps") or {}),
                            ("app glob", merged_globs)):
         for name, spec in section.items():
             spec = spec or {}
-            unknown = set(spec.keys()) - _APP_KEYS
+            unknown = set(spec.keys()) - app_keys
             if unknown:
                 errs.append(f"{label} '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
-    if errs:
-        files = ", ".join(str(p) for p in paths)
-        raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
+    return errs
 
 
 def load_config(paths: list[Path]) -> Config:
@@ -389,14 +374,16 @@ def load_config(paths: list[Path]) -> Config:
         raw["apps"] = exact_apps
         merged = _merge_raw(merged, raw)
         merged_globs = _merge_section(
-            merged_globs, glob_apps,
-            _APP_LIST_FIELDS, _APP_SCALAR_FIELDS,
+            merged_globs, glob_apps, _APP_SCHEMA,
         )
 
     cfg = Config(paths=paths)
 
-    _validate_entry_structure(merged, merged_globs, paths)
-    _check_unknown_keys(merged, merged_globs, paths)
+    errs = _validate_entry_structure(merged, merged_globs)
+    errs += _check_unknown_keys(merged, merged_globs)
+    if errs:
+        files = ", ".join(str(p) for p in paths)
+        raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
 
     core_raw = merged.get("core") or {}
     cfg.core = Core(
