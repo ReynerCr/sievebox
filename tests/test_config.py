@@ -546,6 +546,34 @@ def test_env_value_non_string_rejected(tmp_path):
         load_config([tmp_path / "base.yaml"])
 
 
+# --- Golden tests for validation files ---
+
+VALIDATION_DIR = REPO / "tests" / "validation"
+GOLDEN_DIR = REPO / "tests" / "golden"
+
+
+def test_structural_errors_golden():
+    """Load structural-errors.yaml and compare error output to golden file."""
+    try:
+        load_config([VALIDATION_DIR / "structural-errors.yaml"])
+        pytest.fail("expected ConfigError")
+    except ConfigError as e:
+        actual = str(e)
+    # Normalize absolute paths back to relative so the golden file is portable.
+    actual = actual.replace(str(REPO) + "/", "")
+    golden = (GOLDEN_DIR / "structural-errors.txt").read_text().rstrip("\n")
+    assert actual == golden, f"output differs from golden:\n{actual}"
+
+
+def test_valid_edge_cases_loads_cleanly():
+    """Load valid-edge-cases.yaml and assert no errors."""
+    cfg = load_config([VALIDATION_DIR / "valid-edge-cases.yaml"])
+    assert "minimal" in cfg.modules
+    assert "chain_end" in cfg.modules
+    assert "alpha" in cfg.apps
+    assert "test-*" in cfg.app_globs
+
+
 # --- Existing negative tests that should keep passing ---
 
 

@@ -1,0 +1,92 @@
+# Standalone config that triggers every structural validation error.
+# Load directly (not as a drop-in):
+#   SIEVEBOX_CONFIG=tests/validation/structural-errors.yaml sievebox status
+#
+# All errors are accumulated and reported together.  Expected output
+# lists type mismatches, unknown keys, and filesystem sub-errors.
+
+modules:
+
+  # shell_init must be a string
+  bad_shell_type:
+    shell_init: [not, a, string]
+
+  # extends must be a list
+  bad_extends_type:
+    extends: simple_module
+
+  # setenv must be a list
+  bad_setenv_type:
+    setenv: HOME
+
+  # sockets must be a list
+  bad_sockets_type:
+    sockets: wayland
+
+  # devices must be a list
+  bad_devices_type:
+    devices: dri
+
+  # filesystem must be a mapping, not a list
+  bad_fs_list:
+    filesystem: [ro, /tmp]
+
+  # filesystem sub-keys can only be ro or rw
+  bad_fs_key:
+    filesystem:
+      ro: [/tmp]
+      bogus: [/data]
+
+  # filesystem sub-values must be lists
+  bad_fs_value:
+    filesystem:
+      ro: /tmp
+
+  # raw_args must be a list of lists, not a flat list
+  bad_raw_flat:
+    raw_args: [--share-net]
+
+  # raw_args inner items must be lists
+  bad_raw_item:
+    raw_args:
+      - [--share-net]
+      - not-a-list
+
+  # unknown keys on a module (color and allow_home are app keys)
+  bad_unknown:
+    extends: [simple_module]
+    color: "100"
+    allow_home: false
+
+apps:
+
+  # color must be str or int, not a list
+  bad_color_type:
+    modules: [simple_module]
+    color: [1, 2, 3]
+
+  # allow_home must be a bool
+  bad_allow_home_type:
+    modules: [simple_module]
+    allow_home: "yes"
+
+  # modules must be a list
+  bad_modules_type:
+    modules: simple_module
+
+  # env must be a mapping
+  bad_env_type:
+    modules: [simple_module]
+    env: PATH
+
+  # env values must be strings
+  bad_env_value:
+    modules: [simple_module]
+    env:
+      MY_VAR: 42
+
+  # unknown keys on an app (extends and filesystem are module keys)
+  bad_unknown:
+    modules: [simple_module]
+    extends: [base]
+    filesystem: {}
