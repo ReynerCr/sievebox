@@ -139,7 +139,7 @@ only recognized **before** the binary name.
   permissions (see below). Needs `strace`.
 - `-p, --prompt`: when a tool's optional bind directory is missing, offer to
   create it (also via `SIEVEBOX_PROMPT=true`). Default is to skip.
-- `--relax=<measure1, measure2,...>`: relax a list of comma-separated security measures. Accepted values:
+- `--relax=<measure1,measure2,...>`: relax a list of comma-separated security measures. Accepted values:
   - `bwrap`: no namespace isolation, plain exec. As of today, bubblewrap is the
     only security tool used so if disabled, the app runs directly on the host
     with no sandbox at all. That also means no wrapper script and no banner.
@@ -154,10 +154,12 @@ only recognized **before** the binary name.
     `relax=bwrap`. When more measures land (e.g. `seccomp` or `rlimits`), `all`
     will expand to cover them too.
 - `--raw`: shorthand for `--relax=all`.
-- `--modules=<list>`: append modules to the app's declared list at runtime,
-  comma-separated. Injected modules go through the same `extends` expansion as
-  declared modules. Useful for ad-hoc grants without editing profiles:
-  `sievebox --modules=network,gpu mytool`.
+- `--modules=<module1,module2,...>`: append modules to the app's declared list
+  at runtime, comma-separated. Injected modules go through the same `extends`
+  expansion as declared modules. Useful for ad-hoc grants without editing
+  profiles. Accepted values: any module name from the active configuration; run
+  `sievebox --list` to see available modules.
+  Example: `sievebox --modules=network,gpu mytool`.
 - `-h, --help`: show the usage info.
 
 ## Configuration
@@ -231,6 +233,23 @@ checking that the sandbox banner is printed.
 This isn't a catch-all. If a command is invoked through another (e.g. under
 `command`, `strace`), by an alias, or by its full path instead of the bare name, the override
 is bypassed.
+
+### Bash completion
+
+Source the static completion file from your `~/.bashrc`:
+
+```bash
+source /path/to/sievebox/completion/sievebox.bash
+```
+
+Or, if the `sievebox` binary is on your `$PATH`:
+
+```bash
+eval "$(sievebox completion bash)"
+```
+
+This provides tab-completion for flags, `--modules=` and `--relax=` values
+(including comma-separated multi-segment completion), and registered app names.
 
 ## Roadmap
 

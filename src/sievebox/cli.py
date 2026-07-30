@@ -54,8 +54,66 @@ def _err(msg: str) -> None:
     print(f"Error: {msg}", file=sys.stderr)
 
 
+# Flag set for bash completion (includes all completable forms).
+_COMPLETE_FLAGS = [
+    "--help", "--list", "--status", "--dry-run", "--discover",
+    "--prompt", "--verbose", "--relax=", "--modules=", "--raw",
+    "-h", "-l", "-p", "-v",
+]
+
+
+def _handle_complete(args: list[str]) -> int:
+    """Hidden subcommand for bash completion. Prints candidates one per line."""
+    if not args:
+        return 0
+    context = args[0]
+
+    if context == "flags":
+        for flag in _COMPLETE_FLAGS:
+            print(flag)
+        return 0
+
+    if context == "relax":
+        for val in sorted(VALID_RELAX):
+            print(val)
+        return 0
+
+    try:
+        cfg = load_config(find_config_files(_config_search_dir()))
+    except ConfigError:
+        return 0
+
+    if context == "modules":
+        for name in sorted(cfg.modules):
+            print(name)
+        return 0
+
+    if context == "apps":
+        for name in sorted(cfg.apps):
+            print(name)
+        for pattern in sorted(cfg.app_globs):
+            print(pattern)
+        return 0
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+
+    # Hidden subcommands for bash completion (ignore mode guard).
+    if argv and argv[0] == "__complete":
+        return _handle_complete(argv[1:])
+
+    if argv and argv[0] == "completion":
+        if len(argv) > 1 and argv[1] == "bash":
+            script_path = _config_search_dir() / "completion" / "sievebox.bash"
+            if script_path.is_file():
+                print(script_path.read_text())
+            else:
+                _err(f"completion script not found at {script_path}")
+                return 1
+        return 0
 
     mode = "run"
     prompt = os.environ.get("SIEVEBOX_PROMPT", "false") == "true"
