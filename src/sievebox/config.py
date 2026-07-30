@@ -143,8 +143,10 @@ def _deep_merge_entry(base_entry: dict, overlay_entry: dict,
     """Deep-merge a single module or app entry.
 
     Scalars: later-wins. Lists: append+dedup. Dicts (filesystem, env): per-key
-    merge. Unknown keys: later-wins (passthrough).
+    merge. Unknown keys are a hard error (catches typos in overlays at merge
+    time with the overlay file name, not only later in _check_unknown_keys).
     """
+    known_keys = set(scalar_fields) | set(list_fields) | {"filesystem", "env"}
     result = dict(base_entry)
     for key, value in overlay_entry.items():
         if key in scalar_fields:
@@ -164,7 +166,10 @@ def _deep_merge_entry(base_entry: dict, overlay_entry: dict,
             base_env.update(value or {})
             result[key] = base_env
         else:
-            result[key] = value
+            raise ConfigError(
+                f"unknown key '{key}' in overlay (valid: "
+                f"{', '.join(sorted(known_keys))})"
+            )
     return result
 
 
@@ -259,6 +264,96 @@ def _build_app(name: str, spec: dict) -> App:
     )
 
 
+def _validate_filesystem(fs: dict, entry: str, errs: list[str]) -> None:
+    """Validate module filesystem sub-object: keys must be ro/rw, values lists."""
+    if not isinstance(fs, dict):
+        errs.append(f"{entry}: 'filesystem' must be a mapping")
+        return
+    for subkey, subval in fs.items():
+        if subkey not in ("ro", "rw"):
+            errs.append(f"{entry}: filesystem has unknown key '{subkey}' "
+                        f"(valid: ro, rw)")
+        elif not isinstance(subval, list):
+            errs.append(f"{entry}: filesystem.{subkey} must be a list")
+
+
+_module_scalar_typechecks = {"shell_init": (str,) }
+_module_list_typechecks = {"extends": (list,), "setenv": (list,),
+                           "sockets": (list,), "devices": (list,)}
+_app_scalar_typechecks = {"color": (str, int), "allow_home": (bool,)}
+_app_list_typechecks = {"modules": (list,)}
+_app_map_typechecks = {"env": (dict,)}
+
+
+def _validate_entry_structure(merged: dict, merged_globs: dict,
+                               paths: list[Path]) -> None:
+    """Reject misplaced/ill-typed keys inside modules and apps.
+
+    Called before _check_unknown_keys (which rejects unknown top-level
+    module/app keys).  Both are applied to the merged dict before
+    constructing dataclasses.
+    """
+    errs: list[str] = []
+
+    for name, spec in (merged.get("modules") or {}).items():
+        spec = spec or {}
+        label = f"module '{name}'"
+
+        # filesystem must be a mapping with only ro/rw keys
+        if "filesystem" in spec:
+            _validate_filesystem(spec["filesystem"], label, errs)
+
+        # raw_args must be a list of lists
+        if "raw_args" in spec:
+            ra = spec["raw_args"]
+            if not isinstance(ra, list):
+                errs.append(f"{label}: 'raw_args' must be a list")
+            else:
+                for i, d in enumerate(ra):
+                    if not isinstance(d, list):
+                        errs.append(f"{label}: raw_args[{i}] must be a list")
+
+        # Scalar type checks
+        for key, types in _module_scalar_typechecks.items():
+            if key in spec and not isinstance(spec[key], types):
+                errs.append(f"{label}: '{key}' must be a {types[0].__name__}")
+
+        # List type checks
+        for key, types in _module_list_typechecks.items():
+            if key in spec and not isinstance(spec[key], types):
+                errs.append(f"{label}: '{key}' must be a list")
+
+    for label_prefix, section in (("app", merged.get("apps") or {}),
+                                   ("app glob", merged_globs)):
+        for name, spec in section.items():
+            spec = spec or {}
+            label = f"{label_prefix} '{name}'"
+
+            # Scalar type checks
+            for key, types in _app_scalar_typechecks.items():
+                if key in spec and not isinstance(spec[key], types):
+                    errs.append(f"{label}: '{key}' must be a {types[0].__name__}")
+
+            # List type checks
+            for key, types in _app_list_typechecks.items():
+                if key in spec and not isinstance(spec[key], types):
+                    errs.append(f"{label}: '{key}' must be a list")
+
+            # Mapping type checks
+            for key, types in _app_map_typechecks.items():
+                if key in spec and not isinstance(spec[key], types):
+                    errs.append(f"{label}: '{key}' must be a mapping")
+                elif key in spec:
+                    # Check env values are strings
+                    for ek, ev in spec[key].items():
+                        if not isinstance(ev, str):
+                            errs.append(f"{label}: env['{ek}'] must be a string")
+
+    if errs:
+        files = ", ".join(str(p) for p in paths)
+        raise ConfigError(f"invalid config ({files}):\n  " + "\n  ".join(errs))
+
+
 def _check_unknown_keys(merged: dict, merged_globs: dict, paths: list[Path]) -> None:
     """Reject unknown keys on module, app, and glob entries."""
     errs: list[str] = []
@@ -300,6 +395,7 @@ def load_config(paths: list[Path]) -> Config:
 
     cfg = Config(paths=paths)
 
+    _validate_entry_structure(merged, merged_globs, paths)
     _check_unknown_keys(merged, merged_globs, paths)
 
     core_raw = merged.get("core") or {}
