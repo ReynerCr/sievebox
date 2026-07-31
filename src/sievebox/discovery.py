@@ -467,14 +467,7 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     print(f"[discovery] Artifacts: {run_dir}")
     print()
 
-    rc = 0
-    try:
-        subprocess.run(
-            ["strace", "-f", "-e", "trace=%file", "-o", str(trace), "bwrap", *bwrap_argv],
-            pass_fds=pass_fds,
-        )
-    except subprocess.CalledProcessError as e:
-        rc = e.returncode
+    rc = _run_strace(trace, bwrap_argv, pass_fds)
 
     failures, probing = classify(str(trace), bound, tmpfs, here, os.environ.get("PATH", ""))
     mark_exists(failures)
@@ -496,6 +489,19 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     print(f"[discovery] Full artifacts kept in: {run_dir}")
 
     return rc
+
+
+def _run_strace(trace_path: Path, bwrap_argv: list[str],
+                pass_fds: tuple[int, ...]) -> int:
+    try:
+        subprocess.run(
+            ["strace", "-f", "-e", "trace=%file", "-o", str(trace_path),
+             "bwrap", *bwrap_argv],
+            pass_fds=pass_fds,
+        )
+    except subprocess.CalledProcessError as e:
+        return e.returncode
+    return 0
 
 
 def _write_failures(failures: list[dict], path: Path) -> None:
