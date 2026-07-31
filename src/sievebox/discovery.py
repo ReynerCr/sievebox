@@ -208,19 +208,10 @@ def _has_substring(path: str, patterns: list[str]) -> bool:
     return any(p in path for p in patterns)
 
 
-def classify(trace_path: str, bound: set[str], tmpfs: set[str],
-             here: str, path_env: str) -> tuple[list[dict], list[dict]]:
-    """Parse strace trace, classify failures into buckets.
-    Returns (failures, probing) lists of dicts."""
-    err_set = set(ERRNOS)
-    path_set = set()
-    for d in path_env.split(":"):
-        d = re.sub(r"/+", "/", d)
-        if len(d) > 1:
-            d = d.rstrip("/")
-        if d:
-            path_set.add(d)
-
+def _parse_trace(trace_path: str) -> tuple[dict[str, int], dict[str, int], dict[str, int], set[str], int]:
+    """Parse strace trace line by line.
+    Returns (fail_count, last_seen, success, write_paths, fatal_line).
+    """
     fail_count: dict[str, int] = {}
     last_seen: dict[str, int] = {}
     success: dict[str, int] = {}
@@ -268,6 +259,22 @@ def classify(trace_path: str, bound: set[str], tmpfs: set[str],
                     write_paths.add(p)
             elif _is_success(line):
                 success[p] = success.get(p, 0) + 1
+
+    return fail_count, last_seen, success, write_paths, fatal
+
+
+def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
+                    success: dict[str, int], write_paths: set[str],
+                    fatal: int, bound: set[str], tmpfs: set[str],
+                    here: str, path_env: str) -> tuple[list[dict], list[dict]]:
+    """Classify each failed path into buckets. Returns (failures, probing)."""
+    path_set: set[str] = set()
+    for d in path_env.split(":"):
+        d = re.sub(r"/+", "/", d)
+        if len(d) > 1:
+            d = d.rstrip("/")
+        if d:
+            path_set.add(d)
 
     # Pass 1: gather candidates + prelim bucket
     bnc: dict[str, int] = {}
@@ -320,6 +327,15 @@ def classify(trace_path: str, bound: set[str], tmpfs: set[str],
     failures.sort(key=lambda r: r["path"])
     failures.append({"bucket": "META", "count": "fatal", "last": fatal, "path": "-"})
     return failures, probing
+
+
+def classify(trace_path: str, bound: set[str], tmpfs: set[str],
+             here: str, path_env: str) -> tuple[list[dict], list[dict]]:
+    """Parse strace trace, classify failures into buckets.
+    Returns (failures, probing) lists of dicts."""
+    fail_count, last_seen, success, write_paths, fatal = _parse_trace(trace_path)
+    return _classify_paths(fail_count, last_seen, success, write_paths,
+                           fatal, bound, tmpfs, here, path_env)
 
 
 # --- Mark exists --------------------------------------------------------------
