@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -71,6 +72,68 @@ def _validate_mode(current: str, new: str) -> str:
     return new
 
 
+@dataclass
+class ParsedArgs:
+    mode: str = "run"
+    verbose: bool = False
+    prompt: bool = False
+    relaxed: set[str] = field(default_factory=set)
+    inject_modules: list[str] = field(default_factory=list)
+    positional: list[str] = field(default_factory=list)
+
+
+def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
+    """Parse sievebox CLI options. Returns (args, 0) on success, (None, code) on early exit."""
+    args = ParsedArgs()
+    if os.environ.get("SIEVEBOX_PROMPT", "false") == "true":
+        args.prompt = True
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-h", "--help"):
+            print(USAGE)
+            return None, 0
+        elif a in ("-l", "--list"):
+            args.mode = _validate_mode(args.mode, "list")
+        elif a == "--status":
+            args.mode = _validate_mode(args.mode, "status")
+        elif a == "--discover":
+            args.mode = _validate_mode(args.mode, "discover")
+        elif a == "--dry-run":
+            args.mode = _validate_mode(args.mode, "dryrun")
+        elif a in ("-p", "--prompt"):
+            args.prompt = True
+        elif a in ("-v", "--verbose"):
+            args.verbose = True
+        elif a == "--raw":
+            args.relaxed.add("all")
+        elif a.startswith("--relax="):
+            for val in a[len("--relax="):].split(","):
+                val = val.strip()
+                if val not in VALID_RELAX:
+                    _err(f"invalid --relax value '{val}' (valid: {', '.join(sorted(VALID_RELAX))})")
+                    return None, 2
+                args.relaxed.add(val)
+        elif a.startswith("--modules="):
+            vals = [v.strip() for v in a[len("--modules="):].split(",")]
+            if not any(vals):
+                _err("--modules= requires at least one module name")
+                return None, 2
+            args.inject_modules.extend(vals)
+        elif a == "--":
+            args.positional = argv[i + 1:]
+            break
+        elif a.startswith("-"):
+            _err(f"unknown option '{a}'")
+            print(USAGE, file=sys.stderr)
+            return None, 2
+        else:
+            args.positional = argv[i:]
+            break
+        i += 1
+    return args, 0
+
+
 # Flag set for bash completion (includes all completable forms).
 _COMPLETE_FLAGS = [
     "--help", "--list", "--status", "--dry-run", "--discover",
@@ -132,57 +195,9 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         return 0
 
-    mode = "run"
-    prompt = os.environ.get("SIEVEBOX_PROMPT", "false") == "true"
-    verbose = False
-    relaxed: set[str] = set()
-    inject_modules: list[str] = []
-    positional: list[str] = []
-
-    i = 0
-    while i < len(argv):
-        a = argv[i]
-        if a in ("-h", "--help"):
-            print(USAGE)
-            return 0
-        elif a in ("-l", "--list"):
-            mode = _validate_mode(mode, "list")
-        elif a == "--status":
-            mode = _validate_mode(mode, "status")
-        elif a == "--discover":
-            mode = _validate_mode(mode, "discover")
-        elif a == "--dry-run":
-            mode = _validate_mode(mode, "dryrun")
-        elif a in ("-p", "--prompt"):
-            prompt = True
-        elif a in ("-v", "--verbose"):
-            verbose = True
-        elif a == "--raw":
-            relaxed.add("all")
-        elif a.startswith("--relax="):
-            for val in a[len("--relax="):].split(","):
-                val = val.strip()
-                if val not in VALID_RELAX:
-                    _err(f"invalid --relax value '{val}' (valid: {', '.join(sorted(VALID_RELAX))})")
-                    return 2
-                relaxed.add(val)
-        elif a.startswith("--modules="):
-            vals = [v.strip() for v in a[len("--modules="):].split(",")]
-            if not any(vals):
-                _err("--modules= requires at least one module name")
-                return 2
-            inject_modules.extend(vals)
-        elif a == "--":
-            positional = argv[i + 1:]
-            break
-        elif a.startswith("-"):
-            _err(f"unknown option '{a}'")
-            print(USAGE, file=sys.stderr)
-            return 2
-        else:
-            positional = argv[i:]
-            break
-        i += 1
+    args, rc = _parse_args(argv)
+    if args is None:
+        return rc
 
     try:
         cfg = load_config(find_config_files(_config_search_dir()))
@@ -190,20 +205,20 @@ def main(argv: list[str] | None = None) -> int:
         _err(str(e))
         return 1
 
-    if mode == "list":
-        return _handle_list(cfg, positional, verbose)
+    if args.mode == "list":
+        return _handle_list(cfg, args.positional, args.verbose)
 
-    if not positional:
+    if not args.positional:
         print(USAGE, file=sys.stderr)
         return 1
-    target = os.path.basename(positional[0])
+    target = os.path.basename(args.positional[0])
 
     if find_app(cfg, target) is None:
         _err(f"'{target}' is not registered in any profile.")
         print("       Run 'sievebox --list' to see registered binaries.", file=sys.stderr)
         return 1
 
-    for mod in inject_modules:
+    for mod in args.inject_modules:
         if mod not in cfg.modules:
             _err(f"unknown module '{mod}' in --modules= (run 'sievebox --list' for available modules)")
             return 1
@@ -211,58 +226,58 @@ def main(argv: list[str] | None = None) -> int:
     here = os.path.realpath(os.getcwd())
     home = os.environ.get("HOME") or os.path.expanduser("~")
     comp = compose_mod.compose(cfg, target, here=here, home=home,
-                               relaxed=relaxed, inject_modules=inject_modules)
+                               relaxed=args.relaxed, inject_modules=args.inject_modules)
 
-    if mode == "status":
-        return _handle_status(cfg, target, comp, relaxed)
+    if args.mode == "status":
+        return _handle_status(cfg, target, comp, args.relaxed)
 
-    bwrap_off = "bwrap" in relaxed or "all" in relaxed
+    bwrap_off = "bwrap" in args.relaxed or "all" in args.relaxed
 
-    if "filesystem" in relaxed and "ro-filesystem" in relaxed:
+    if "filesystem" in args.relaxed and "ro-filesystem" in args.relaxed:
         _err("--relax=filesystem and --relax=ro-filesystem are mutually exclusive.")
         return 2
 
-    if mode == "discover" and bwrap_off:
+    if args.mode == "discover" and bwrap_off:
         _err("--discover requires the sandbox; cannot use with --relax=bwrap or --raw.")
         return 1
 
     # run / dryrun / discover share composition + invocation assembly
-    if bwrap_off and mode == "dryrun":
-        print(" ".join(_quote(t) for t in positional))
+    if bwrap_off and args.mode == "dryrun":
+        print(" ".join(_quote(t) for t in args.positional))
         return 0
 
-    if not bwrap_off and comp.home_violation and mode in ("run", "discover"):
+    if not bwrap_off and comp.home_violation and args.mode in ("run", "discover"):
         _err("Cannot run from $HOME. Change to a project-specific directory and rerun.")
         return 1
     if not shutil.which(target):
         print(f"Warning: '{target}' not found on PATH; execution may fail.", file=sys.stderr)
-    if mode in ("run", "discover") and not bwrap_off and not shutil.which("bwrap"):
+    if args.mode in ("run", "discover") and not bwrap_off and not shutil.which("bwrap"):
         _err("bubblewrap ('bwrap') not found on PATH; install it to run sandboxes.")
         return 1
 
     if bwrap_off:
-        os.execvp(target, positional)
+        os.execvp(target, args.positional)
 
     script = exec_mod.build_exec_cmd(comp.color, comp.shell_inits)
     # arg0 = target basename (drives the conda check); the full positional
     # (binary as typed + its args) becomes "$@", which the script exec's.
     # --remount-ro / would undo --relax=filesystem's rw bind.
-    fs_relaxed = "filesystem" in relaxed
+    fs_relaxed = "filesystem" in args.relaxed
     remount = [] if fs_relaxed else ["--remount-ro", "/"]
-    invocation = comp.bwrap_args + remount + ["bash", "-c", script, target, *positional]
+    invocation = comp.bwrap_args + remount + ["bash", "-c", script, target, *args.positional]
 
-    if mode == "dryrun":
+    if args.mode == "dryrun":
         lines = [" ".join(_quote(t) for t in grp) for grp in _dryrun_lines(invocation)]
         print("bwrap " + " \\\n  ".join(lines))
         return 0
 
-    if mode == "discover":
+    if args.mode == "discover":
         state_dir = os.environ.get(
             "SIEVEBOX_STATE_DIR",
             os.path.join(os.environ.get("XDG_STATE_HOME", home + "/.local/state"), "sievebox"),
         )
         fd = fdargs_mod.write_args_fd(comp.bwrap_args + remount)
-        bwrap_argv = ["--args", str(fd), "bash", "-c", script, target, *positional]
+        bwrap_argv = ["--args", str(fd), "bash", "-c", script, target, *args.positional]
         rc = discovery_mod.run_discovery(
             cfg, target, bwrap_argv, comp.bwrap_args + remount, (fd,),
             here, home, state_dir,
@@ -271,11 +286,11 @@ def main(argv: list[str] | None = None) -> int:
         os.close(fd)
         return rc
 
-    if prompt:
+    if args.prompt:
         _prompt_create(comp.bwrap_args)
     _banner(comp, target)
     fd = fdargs_mod.write_args_fd(comp.bwrap_args + remount)
-    os.execvp("bwrap", ["bwrap", "--args", str(fd), "bash", "-c", script, target, *positional])
+    os.execvp("bwrap", ["bwrap", "--args", str(fd), "bash", "-c", script, target, *args.positional])
 
 
 def _quote(tok: str) -> str:
