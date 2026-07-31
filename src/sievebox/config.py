@@ -130,7 +130,7 @@ def find_config_files(script_dir: Path | None = None) -> list[Path]:
     return paths
 
 
-def _as_list(value) -> list:
+def _as_list(value: object) -> list:
     if value is None:
         return []
     return value if isinstance(value, list) else [value]
@@ -296,14 +296,24 @@ def _type_name(t: type | tuple) -> str:
     return t.__name__
 
 
+def _iter_entries(merged: dict, merged_globs: dict) -> list[tuple[str, str, dict, dict]]:
+    """Yield (label_prefix, name, spec, schema) for every module and app entry."""
+    entries: list[tuple[str, str, dict, dict]] = []
+    for name, spec in (merged.get("modules") or {}).items():
+        entries.append(("module", name, spec or {}, _MODULE_SCHEMA))
+    for name, spec in (merged.get("apps") or {}).items():
+        entries.append(("app", name, spec or {}, _APP_SCHEMA))
+    for name, spec in merged_globs.items():
+        entries.append(("app glob", name, spec or {}, _APP_SCHEMA))
+    return entries
+
+
 def _validate_entry_structure(merged: dict, merged_globs: dict) -> list[str]:
     """Return a list of type/shape errors inside modules and apps."""
     errs: list[str] = []
-
-    for name, spec in (merged.get("modules") or {}).items():
-        spec = spec or {}
-        label = f"module '{name}'"
-        for key, field in _MODULE_SCHEMA.items():
+    for label_prefix, name, spec, schema in _iter_entries(merged, merged_globs):
+        label = f"{label_prefix} '{name}'"
+        for key, field in schema.items():
             if key not in spec:
                 continue
             value = spec[key]
@@ -317,45 +327,21 @@ def _validate_entry_structure(merged: dict, merged_globs: dict) -> list[str]:
                 for i, item in enumerate(value):
                     if not isinstance(item, field["item_type"]):
                         errs.append(f"{label}: {key}[{i}] must be a {_type_name(field['item_type'])}")
-
-    for label_prefix, section in (("app", merged.get("apps") or {}),
-                                   ("app glob", merged_globs)):
-        for name, spec in section.items():
-            spec = spec or {}
-            label = f"{label_prefix} '{name}'"
-            for key, field in _APP_SCHEMA.items():
-                if key not in spec:
-                    continue
-                value = spec[key]
-                if not isinstance(value, field["type"]):
-                    errs.append(f"{label}: '{key}' must be a {_type_name(field['type'])}")
-                    continue
-                if "value_type" in field:
-                    vt = field["value_type"]
-                    for ek, ev in value.items():
-                        if not isinstance(ev, vt):
-                            errs.append(f"{label}: {key}['{ek}'] must be a {_type_name(vt)}")
-
+            if "value_type" in field:
+                vt = field["value_type"]
+                for ek, ev in value.items():
+                    if not isinstance(ev, vt):
+                        errs.append(f"{label}: {key}['{ek}'] must be a {_type_name(vt)}")
     return errs
 
 
 def _check_unknown_keys(merged: dict, merged_globs: dict) -> list[str]:
     """Reject unknown keys on module, app, and glob entries."""
     errs: list[str] = []
-    module_keys = set(_MODULE_SCHEMA)
-    app_keys = set(_APP_SCHEMA)
-    for name, spec in (merged.get("modules") or {}).items():
-        spec = spec or {}
-        unknown = set(spec.keys()) - module_keys
+    for label_prefix, name, spec, schema in _iter_entries(merged, merged_globs):
+        unknown = set(spec.keys()) - set(schema)
         if unknown:
-            errs.append(f"module '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
-    for label, section in (("app", merged.get("apps") or {}),
-                           ("app glob", merged_globs)):
-        for name, spec in section.items():
-            spec = spec or {}
-            unknown = set(spec.keys()) - app_keys
-            if unknown:
-                errs.append(f"{label} '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
+            errs.append(f"{label_prefix} '{name}' has unknown key(s): {', '.join(sorted(unknown))}")
     return errs
 
 
@@ -452,17 +438,18 @@ def flatten_modules(cfg: Config, declared: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
 
-    def walk(mod: str) -> None:
-        if mod in seen or mod not in cfg.modules:
-            return
-        seen.add(mod)
-        for base in cfg.modules[mod].extends:
-            walk(base)
-        out.append(mod)
-
     for m in declared:
-        walk(m)
+        _walk_module(m, cfg, out, seen)
     return out
+
+
+def _walk_module(mod: str, cfg: Config, out: list[str], seen: set[str]) -> None:
+    if mod in seen or mod not in cfg.modules:
+        return
+    seen.add(mod)
+    for base in cfg.modules[mod].extends:
+        _walk_module(base, cfg, out, seen)
+    out.append(mod)
 
 
 def find_app(cfg: Config, name: str) -> App | None:

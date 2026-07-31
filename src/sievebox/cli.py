@@ -7,12 +7,17 @@ import shlex
 import shutil
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
 from . import fdargs as fdargs_mod
 from .bwrap import arity, category
 from .config import DEFAULT_COLOR, ConfigError, find_app, find_config_files, flatten_modules, load_config
+
+if TYPE_CHECKING:
+    from .compose import Composition
+    from .config import Config
 
 USAGE = """\
 Usage: sievebox [options] <binary> [args...]
@@ -44,6 +49,11 @@ def _color(code: str) -> str:
 
 RESET = "\033[0m" if sys.stdout.isatty() else ""
 
+BANNER_YELLOW = "226"
+BANNER_WHITE = "231"
+BANNER_PATH_OK = "119"
+BANNER_PATH_NONE = "1"
+
 
 def _config_search_dir() -> Path:
     # repo root: .../src/sievebox/cli.py -> repo root
@@ -52,6 +62,13 @@ def _config_search_dir() -> Path:
 
 def _err(msg: str) -> None:
     print(f"Error: {msg}", file=sys.stderr)
+
+
+def _validate_mode(current: str, new: str) -> str:
+    if current != "run" and current != new:
+        _err(f"--{current} and --{new} are mutually exclusive")
+        sys.exit(1)
+    return new
 
 
 # Flag set for bash completion (includes all completable forms).
@@ -122,13 +139,6 @@ def main(argv: list[str] | None = None) -> int:
     inject_modules: list[str] = []
     positional: list[str] = []
 
-    def set_mode(new: str) -> None:
-        nonlocal mode
-        if mode != "run" and mode != new:
-            _err(f"--{mode} and --{new} are mutually exclusive")
-            sys.exit(1)
-        mode = new
-
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -136,13 +146,13 @@ def main(argv: list[str] | None = None) -> int:
             print(USAGE)
             return 0
         elif a in ("-l", "--list"):
-            set_mode("list")
+            mode = _validate_mode(mode, "list")
         elif a == "--status":
-            set_mode("status")
+            mode = _validate_mode(mode, "status")
         elif a == "--discover":
-            set_mode("discover")
+            mode = _validate_mode(mode, "discover")
         elif a == "--dry-run":
-            set_mode("dryrun")
+            mode = _validate_mode(mode, "dryrun")
         elif a in ("-p", "--prompt"):
             prompt = True
         elif a in ("-v", "--verbose"):
@@ -302,7 +312,7 @@ def _grouped(args: list[str]) -> dict[str, list[str]]:
     return {"rw": rw, "ro": ro, "dev": dev}
 
 
-def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
+def _handle_list(cfg: Config, bins: list[str], verbose: bool) -> int:
     if bins:
         for raw in bins:
             b = os.path.basename(raw)
@@ -339,7 +349,7 @@ def _handle_list(cfg, bins: list[str], verbose: bool) -> int:
     return 0
 
 
-def _handle_status(cfg, target: str, comp, relaxed: set[str] | None = None) -> int:
+def _handle_status(cfg: Config, target: str, comp: Composition, relaxed: set[str] | None = None) -> int:
     relaxed = relaxed or set()
     print(f"Sievebox status for: {target}")
     print(f"  Config files:       {', '.join(str(p) for p in cfg.paths)}")
@@ -382,13 +392,12 @@ def _prompt_create(bwrap_args: list[str]) -> None:
         i += n
 
 
-def _banner(comp, target: str) -> None:
+def _banner(comp: Composition, target: str) -> None:
     path = comp.here if comp.here_mounted else "NONE"
-    path_color = "119" if comp.here_mounted else "1"
-    yellow, white = "226", "231"
-    print(f"{_color(yellow)}======================================================")
-    print(f"{_color(white)} Entering Sandboxed Container Engine")
+    path_color = BANNER_PATH_OK if comp.here_mounted else BANNER_PATH_NONE
+    print(f"{_color(BANNER_YELLOW)}======================================================")
+    print(f"{_color(BANNER_WHITE)} Entering Sandboxed Container Engine")
     print(f" Host Path:  {_color(path_color)}{path}{RESET}")
-    print(f"{_color(white)} Executing:  {_color(comp.color)}{target}{RESET}")
-    print(f"{_color(yellow)}======================================================{RESET}")
+    print(f"{_color(BANNER_WHITE)} Executing:  {_color(comp.color)}{target}{RESET}")
+    print(f"{_color(BANNER_YELLOW)}======================================================{RESET}")
     print()

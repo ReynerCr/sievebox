@@ -8,8 +8,13 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from shutil import which
+from typing import TYPE_CHECKING
 
 from .bwrap import arity, category
+
+if TYPE_CHECKING:
+    from .config import Config
 
 # --- Classification tables (env-overridable) ---------------------------------
 
@@ -54,26 +59,34 @@ _AUTO_DETECT = os.environ.get("SIEVEBOX_AUTO_DETECT", "true") == "true"
 
 # --- Bwrap arg vector parsing ------------------------------------------------
 
+def iter_directives(bwrap_args: list[str]) -> list[tuple[str, list[str]]]:
+    """Yield (flag, operands) tuples from a flat bwrap argument vector."""
+    out: list[tuple[str, list[str]]] = []
+    i = 0
+    while i < len(bwrap_args):
+        flag = bwrap_args[i]
+        n = arity(flag)
+        out.append((flag, bwrap_args[i + 1 : i + n]))
+        i += n
+    return out
+
+
 def extract_bound_paths(bwrap_args: list[str]) -> set[str]:
     """Dest paths populated from host: binds, symlinks, /dev, /proc.
     Excludes --tmpfs (root tmpfs is why unbound paths fail)."""
     out: set[str] = set()
-    i = 0
-    while i < len(bwrap_args):
-        f = bwrap_args[i]
-        cat = category(f)
-        n = arity(f)
+    for flag, ops in iter_directives(bwrap_args):
+        cat = category(flag)
         if cat in ("bind_rw", "bind_ro", "bind_dev", "bind_overlay"):
-            if f.endswith("-try"):
-                if os.path.exists(bwrap_args[i + 1]):
-                    out.add(bwrap_args[i + 2])
+            if flag.endswith("-try"):
+                if os.path.exists(ops[0]):
+                    out.add(ops[1])
             else:
-                out.add(bwrap_args[i + 2])
+                out.add(ops[1])
         elif cat == "symlink":
-            out.add(bwrap_args[i + 2])
+            out.add(ops[1])
         elif cat == "virtual_fs":
-            out.add(bwrap_args[i + 1])
-        i += n
+            out.add(ops[0])
     out.add("/dev")
     out.add("/proc")
     return out
@@ -82,15 +95,11 @@ def extract_bound_paths(bwrap_args: list[str]) -> set[str]:
 def extract_tmpfs_paths(bwrap_args: list[str]) -> set[str]:
     """Non-root --tmpfs destinations (e.g. /tmp, /run). Feeds EPHEM bucket."""
     out: set[str] = set()
-    i = 0
-    while i < len(bwrap_args):
-        f = bwrap_args[i]
-        n = arity(f)
-        if category(f) == "tmpfs":
-            dst = bwrap_args[i + 1]
+    for flag, ops in iter_directives(bwrap_args):
+        if category(flag) == "tmpfs":
+            dst = ops[0]
             if dst and dst != "/":
                 out.add(dst)
-        i += n
     return out
 
 
@@ -403,12 +412,12 @@ def _section(lines: list[str], failures: list[dict],
 
 # --- Orchestration ------------------------------------------------------------
 
-def run_discovery(cfg, target: str, bwrap_argv: list[str],
+def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
                   bwrap_flat: list[str], pass_fds: tuple[int, ...],
                   here: str, home: str, state_dir: str,
                   effective_deps: list[str]) -> int:
     """Run strace+bwrap via fd-based argv, classify from flat args, summarize. Returns exit code."""
-    if not _which("strace"):
+    if not which("strace"):
         print("Error: --discover requires 'strace' (not found on PATH).", file=sys.stderr)
         return 1
 
@@ -486,8 +495,3 @@ def _write_failures(failures: list[dict], path: Path) -> None:
 def _write_probing(probing: list[dict], path: Path) -> None:
     lines = [f"{r['path']}\t{r['fails']}\t{r['successes']}" for r in probing]
     path.write_text("\n".join(lines) + "\n" if lines else "")
-
-
-def _which(cmd: str) -> bool:
-    from shutil import which
-    return which(cmd) is not None
