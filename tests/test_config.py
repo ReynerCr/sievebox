@@ -632,3 +632,52 @@ apps:
     assert "export READY=1" in cfg.modules["helper"].shell_init
     assert "export READY=1" in cfg.modules["user"].shell_init
     assert "setup" in cfg.modules["user"].shell_init
+
+
+def test_incompatible_modules_raise_at_compose(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"incompatible": ["b"]},
+            "b": {},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    with pytest.raises(ConfigError, match="incompatible"):
+        compose(cfg, "app", here="/tmp", home="/home/user")
+
+
+def test_incompatible_injected_module_raises(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"incompatible": ["b"]},
+            "b": {},
+        },
+        "apps": {"app": {"modules": ["a"]}},
+    })
+    cfg = load_config([base])
+    with pytest.raises(ConfigError, match="incompatible"):
+        compose(cfg, "app", here="/tmp", home="/home/user",
+                inject_modules=["b"])
+
+
+def test_incompatible_unknown_module_rejected(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"a": {"incompatible": ["ghost"]}},
+        "apps": {"app": {"modules": ["a"]}},
+    })
+    with pytest.raises(ConfigError, match="unknown module 'ghost'"):
+        load_config([base])
+
+
+def test_incompatible_not_active_ok(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"incompatible": ["b"]},
+            "b": {},
+        },
+        "apps": {"app": {"modules": ["a"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user")
+    assert comp.effective_modules == ["a"]

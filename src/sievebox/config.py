@@ -24,6 +24,7 @@ _MODULE_SCHEMA = {
     "extends":      {"merge": "list",   "type": list},
     "setenv":       {"merge": "list",   "type": list},
     "shell_init":   {"merge": "scalar", "type": (str, list), "item_type": str},
+    "incompatible": {"merge": "list",   "type": list, "item_type": str},
     "filesystem":   {"merge": "filesystem", "type": dict},
     "sockets":      {"merge": "list",   "type": list},
     "devices":      {"merge": "list",   "type": list},
@@ -50,6 +51,7 @@ class Module:
     extends: list[str] = field(default_factory=list)
     setenv: list[str] = field(default_factory=list)
     shell_init: str = ""
+    incompatible: list[str] = field(default_factory=list)
     fs_ro: list[str] = field(default_factory=list)
     fs_rw: list[str] = field(default_factory=list)
     sockets: list[str] = field(default_factory=list)
@@ -388,6 +390,7 @@ def load_config(paths: list[Path]) -> Config:
             extends=_as_list(spec.get("extends")),
             setenv=_as_list(spec.get("setenv")),
             shell_init=shell_init,
+            incompatible=_as_list(spec.get("incompatible")),
             fs_ro=_as_list(fs.get("ro")),
             fs_rw=_as_list(fs.get("rw")),
             sockets=_as_list(spec.get("sockets")),
@@ -419,6 +422,9 @@ def _validate(cfg: Config) -> None:
         for base in m.extends:
             if base not in cfg.modules:
                 errs.append(f"module '{m.name}' extends unknown module '{base}'")
+        for other in m.incompatible:
+            if other not in cfg.modules:
+                errs.append(f"module '{m.name}' is incompatible with unknown module '{other}'")
         for sock in m.sockets:
             if sock not in KNOWN_SOCKETS:
                 errs.append(f"module '{m.name}' has unknown socket '{sock}' "
