@@ -577,3 +577,58 @@ def test_valid_edge_cases_loads_cleanly():
 # --- Existing negative tests that should keep passing ---
 
 
+
+# --- shell_init list + incompatible modules ---
+
+def test_shell_init_list_joined(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "custom": {
+                "shell_init": [
+                    "export FOO=1",
+                    "if [ -n \"$FOO\" ]; then echo ok; fi",
+                ],
+            },
+        },
+        "apps": {"npm": {"modules": ["custom"]}},
+    })
+    cfg = load_config([base])
+    assert cfg.modules["custom"].shell_init == (
+        "export FOO=1\nif [ -n \"$FOO\" ]; then echo ok; fi"
+    )
+
+
+def test_shell_init_plain_string_still_works(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"custom": {"shell_init": "export A=1"}},
+        "apps": {"npm": {"modules": ["custom"]}},
+    })
+    cfg = load_config([base])
+    assert cfg.modules["custom"].shell_init == "export A=1"
+
+
+def test_shell_init_anchor_reuse(tmp_path):
+    """A YAML anchor can be referenced from another module's list.
+
+    Anchors must be written as raw YAML: yaml.dump() escapes '&'/'*'.
+    """
+    base = tmp_path / "base.yaml"
+    base.write_text("""\
+modules:
+  helper:
+    shell_init:
+      - &fn |
+        setup() {
+          export READY=1
+        }
+  user:
+    shell_init:
+      - *fn
+      - setup
+apps:
+  npm: { modules: [helper, user] }
+""")
+    cfg = load_config([base])
+    assert "export READY=1" in cfg.modules["helper"].shell_init
+    assert "export READY=1" in cfg.modules["user"].shell_init
+    assert "setup" in cfg.modules["user"].shell_init

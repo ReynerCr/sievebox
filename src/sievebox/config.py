@@ -21,13 +21,13 @@ DEFAULT_COLOR = "39"
 # merge: "scalar" (later-wins), "list" (append+dedup), "filesystem" (nested
 #   dict with ro/rw list sub-keys), or "env" (nested dict with string values).
 _MODULE_SCHEMA = {
-    "extends":    {"merge": "list",       "type": list},
-    "setenv":     {"merge": "list",       "type": list},
-    "shell_init": {"merge": "scalar",     "type": str},
-    "filesystem": {"merge": "filesystem", "type": dict},
-    "sockets":    {"merge": "list",       "type": list},
-    "devices":    {"merge": "list",       "type": list},
-    "raw_args":   {"merge": "list",       "type": list, "item_type": list},
+    "extends":      {"merge": "list",   "type": list},
+    "setenv":       {"merge": "list",   "type": list},
+    "shell_init":   {"merge": "scalar", "type": (str, list), "item_type": str},
+    "filesystem":   {"merge": "filesystem", "type": dict},
+    "sockets":      {"merge": "list",   "type": list},
+    "devices":      {"merge": "list",   "type": list},
+    "raw_args":     {"merge": "list",   "type": list, "item_type": list},
 }
 
 _APP_SCHEMA = {
@@ -380,11 +380,14 @@ def load_config(paths: list[Path]) -> Config:
     for name, spec in (merged.get("modules") or {}).items():
         spec = spec or {}
         fs = spec.get("filesystem") or {}
+        shell_init = spec.get("shell_init") or ""
+        if isinstance(shell_init, list):
+            shell_init = "\n".join(str(s) for s in shell_init)
         cfg.modules[name] = Module(
             name=name,
             extends=_as_list(spec.get("extends")),
             setenv=_as_list(spec.get("setenv")),
-            shell_init=spec.get("shell_init", "") or "",
+            shell_init=shell_init,
             fs_ro=_as_list(fs.get("ro")),
             fs_rw=_as_list(fs.get("rw")),
             sockets=_as_list(spec.get("sockets")),
