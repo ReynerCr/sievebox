@@ -7,9 +7,9 @@
 
 modules:
 
-  # shell_init must be a string
+  # shell_init must be a string or a list of strings
   bad_shell_type:
-    shell_init: [not, a, string]
+    shell_init: 42
 
   # extends must be a list
   bad_extends_type:

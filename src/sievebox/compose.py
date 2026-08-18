@@ -64,6 +64,13 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
 
     declared = app.modules + inject_modules
     eff = flatten_modules(cfg, declared)
+    for name in eff:
+        for other in cfg.modules[name].incompatible:
+            if other in eff:
+                raise ConfigError(
+                    f"modules '{name}' and '{other}' are incompatible and "
+                    f"cannot be active together (effective: {' '.join(eff)})"
+                )
     if root_bind:
         # Root bind first, then virtual FS on top. Skip redundant host binds
         # and tmpfs (conflicts with the root bind). Module rw binds overlay

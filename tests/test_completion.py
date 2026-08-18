@@ -32,8 +32,11 @@ def _setup(tmp_path: Path, data: dict, monkeypatch) -> None:
     path = tmp_path / "sievebox-profiles.yaml"
     path.write_text(yaml.dump(data))
     # Point config search at tmp_path so the repo's sievebox-profiles.yaml
-    # is not found (repo is parent of parent of parent of cli.py).
+    # is not found (repo is parent of parent of parent of cli.py), and point
+    # the XDG dir away so personal ~/.config/sievebox/profiles.d drop-ins
+    # cannot leak into the throwaway configs.
     monkeypatch.setattr(cli_mod, "_config_search_dir", lambda: tmp_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.chdir(tmp_path)
 
 
