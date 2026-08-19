@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 _VAR = re.compile(r"\$(\w+)|\$\{(\w+)\}")
 
 # Known device names under /dev that modules can request.
-KNOWN_DEVICES: set[str] = {"dri", "snd", "video", "input", "tty", "console"}
+KNOWN_DEVICES: set[str] = {"dri", "snd", "video", "input", "tty", "console", "kvm"}
 
 # socket name -> (mode, path template); each path gates on its own $VARs
 _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
