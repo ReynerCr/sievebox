@@ -56,7 +56,10 @@ modules:
 
 - `filesystem.ro` / `filesystem.rw` are lists of paths (`~` and `$VAR` expanded,
   existence-gated with `-try` by default).
-- `sockets`: named host sockets (`wayland`, `pulse`, `pipewire`).
+- `sockets`: named host sockets (`wayland`, `x11`, `pulse`, `pipewire`). The
+  `x11` socket binds the host X session (used only by `x11-dangerous`, weak by
+  design). For X11 apps, prefer the `x11` / `x11-rootful` modules, which run a
+  private X server inside the sandbox.
 - `devices`: device names under `/dev` (e.g. `dri`).
 - `extends`: list of base modules to inherit binds from (pulled in first, deduped,
   cycle-protected).
@@ -126,5 +129,10 @@ Per-app in the YAML:
 Both are a security risk if mishandled. The shipped profiles don't enable D-Bus.
 A proxy that mediates access is the common practice if you need it (sievebox
 may grow support for this later on). Because of `--clearenv`, envs like `XAUTHORITY`
-aren't forwarded, which sidesteps the usual X11 problems. Display support here
-is mainly via the Wayland socket, but the profiles are editable.
+aren't forwarded by default; instead, the `x11-dangerous` module forwards it explicitly.
+Display support is Wayland-first (the `gui` module). X11-only apps use the
+`x11` module: a private X server inside the sandbox, rootless via
+xwayland-satellite when available and rootful Xwayland otherwise, so the host
+X session is never exposed. `x11-rootful` forces the rootful server;
+`x11-dangerous` is the weak opt-in host passthrough, mutually exclusive with
+the other two.

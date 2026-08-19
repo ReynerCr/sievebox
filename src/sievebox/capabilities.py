@@ -17,6 +17,12 @@ KNOWN_DEVICES: set[str] = {"dri", "snd", "video", "input", "tty", "console"}
 # socket name -> (mode, path template); each path gates on its own $VARs
 _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
     "wayland": [("ro", "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY")],
+    # Direct host X11 access: weakens security, opt-in only (the 'x11-dangerous' module).
+    "x11": [
+        ("ro", "/tmp/.X11-unix"),
+        ("ro", "$XAUTHORITY"),
+        ("ro", "~/.Xauthority"),
+    ],
     "pulse": [
         ("ro", "$XDG_RUNTIME_DIR/pulse"),
         ("ro", "$XDG_RUNTIME_DIR/pulse/native"),
@@ -31,6 +37,7 @@ KNOWN_SOCKETS: set[str] = set(_SOCKET_BINDS)
 # host env vars a socket needs forwarded into the sandbox
 _SOCKET_SETENV: dict[str, list[str]] = {
     "wayland": ["WAYLAND_DISPLAY", "DISPLAY"],
+    "x11": ["DISPLAY", "XAUTHORITY"],
 }
 
 _BIND_FLAG = {"ro": "--ro-bind-try", "rw": "--bind-try"}
