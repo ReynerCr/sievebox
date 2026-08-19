@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -43,25 +44,29 @@ _SOCKET_SETENV: dict[str, list[str]] = {
 _BIND_FLAG = {"ro": "--ro-bind-try", "rw": "--bind-try"}
 
 
-def expand_path(path: str) -> str | None:
-    """Expand ~ and $VARs. Return None if any referenced var is unset/empty."""
-    path = os.path.expanduser(path)
+def expand_value(value: str, env: Mapping[str, str] | None = None) -> str | None:
+    """Expand ~ and $VARs. Return None if any referenced var is unset/empty.
+
+    `env` defaults to the host environment; compose passes the merged env
+    (os.environ + app-provided values) when expanding env var values.
+    """
+    value = os.path.expanduser(value)
     missing = False
 
     def repl(m: re.Match) -> str:
         nonlocal missing
-        val = os.environ.get(m.group(1) or m.group(2))
+        val = (os.environ if env is None else env).get(m.group(1) or m.group(2))
         if not val:
             missing = True
             return ""
         return val
 
-    out = _VAR.sub(repl, path)
+    out = _VAR.sub(repl, value)
     return None if missing else out
 
 
 def _bind(mode: str, path: str) -> list[str]:
-    p = expand_path(path)
+    p = expand_value(path)
     return [] if p is None else [_BIND_FLAG[mode], p, p]
 
 
