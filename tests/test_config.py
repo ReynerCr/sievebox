@@ -681,3 +681,60 @@ def test_incompatible_not_active_ok(tmp_path):
     cfg = load_config([base])
     comp = compose(cfg, "app", here="/tmp", home="/home/user")
     assert comp.effective_modules == ["a"]
+
+
+# --- env value expansion in compose ---
+
+def _setenv_value(bwrap_args: list[str], name: str) -> str | None:
+    """Value passed for `name` via --setenv, or None if not forwarded."""
+    for i in range(len(bwrap_args) - 1):
+        if bwrap_args[i] == "--setenv" and bwrap_args[i + 1] == name:
+            return bwrap_args[i + 2]
+    return None
+
+
+def _compose_env_app(tmp_path, app_env: dict, setenv_names: list[str], env: dict):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": setenv_names}},
+        "apps": {"app": {"modules": ["m"], "env": app_env}},
+    })
+    cfg = load_config([base])
+    return compose(cfg, "app", here="/tmp", home="/home/user", env=env)
+
+
+def test_app_env_var_expanded(tmp_path):
+    comp = _compose_env_app(tmp_path, {"FOO": "$HOME/x"}, ["FOO"],
+                            env={"HOME": "/home/user"})
+    assert _setenv_value(comp.bwrap_args, "FOO") == "/home/user/x"
+
+
+def test_app_env_braced_var_expanded(tmp_path):
+    comp = _compose_env_app(tmp_path, {"FOO": "${HOME}/x"}, ["FOO"],
+                            env={"HOME": "/home/user"})
+    assert _setenv_value(comp.bwrap_args, "FOO") == "/home/user/x"
+
+
+def test_app_env_tilde_expanded(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/user")
+    comp = _compose_env_app(tmp_path, {"FOO": "~/x"}, ["FOO"], env={})
+    assert _setenv_value(comp.bwrap_args, "FOO") == "/home/user/x"
+
+
+def test_app_env_chained_values(tmp_path):
+    comp = _compose_env_app(
+        tmp_path, {"A": "$HOME/x", "B": "$A/y"}, ["A", "B"],
+        env={"HOME": "/home/user"})
+    assert _setenv_value(comp.bwrap_args, "A") == "/home/user/x"
+    assert _setenv_value(comp.bwrap_args, "B") == "/home/user/x/y"
+
+
+def test_app_env_unset_var_drops_key(tmp_path):
+    comp = _compose_env_app(tmp_path, {"FOO": "$TOTALLY_UNSET/x"}, ["FOO"],
+                            env={})
+    assert _setenv_value(comp.bwrap_args, "FOO") is None
+
+
+def test_host_env_wins_over_app_env(tmp_path):
+    comp = _compose_env_app(tmp_path, {"FOO": "from-profile"}, ["FOO"],
+                            env={"FOO": "from-host"})
+    assert _setenv_value(comp.bwrap_args, "FOO") == "from-host"
