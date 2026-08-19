@@ -6,8 +6,14 @@ developer tools, but without packaging apps or bundling their own copies of
 system libraries: apps reuse what's already installed on the host, and
 sievebox only restricts what they can reach.
 
-The model is three pieces. **Core permissions** are the always-on floor every
-sandbox gets (fonts, theming, display, …), defined once and locked so a drop-in
+The stance is least privilege: every sandbox gets a small locked core (fonts,
+theming, display, env), and anything beyond that is an explicit module grant.
+Display grant is Wayland-first through the compositor's socket. X11-only tools
+prefer to opt into a private X server (Xwayland) that never exposes the host
+session, with a labeled host-passthrough module as the exception.
+
+The model is three pieces. **Core permissions** are the always-on floor grants
+(fonts, theming, display, …), defined once and locked so a drop-in
 can't relax it. **Modules** are named, reusable permission bundles (filesystem
 binds, sockets, devices, env vars, raw bwrap directives) that can `extends` each
 other, e.g. `node`, `network`, `conda`. An **app** is a binary mapped to a list
@@ -61,6 +67,9 @@ into sievebox as the engine grows.
   or `kernel.apparmor_restrict_unprivileged_userns=0`.
 - **strace**: only needed for `--discover`. Any version with
   `-e trace=%file` support. Tested on 7.1.
+- **xwayland-satellite**: optional, only relevant for X11-only apps. Lets the
+  `x11` module run rootless (per-window surfaces). Without it, `x11` falls
+  back to rootful Xwayland.
 
 ## Installation
 

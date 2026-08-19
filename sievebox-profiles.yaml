@@ -86,8 +86,58 @@ modules:
       - [--ro-bind-try, /etc/pki, /etc/pki]
       - [--ro-bind-try, /etc/ca-certificates, /etc/ca-certificates]
 
+  # Wayland-only sessions. Still required if using Xwayland.
+  # For X11 apps look at 'x11' (private, safer) and 'x11-dangerous' (host, dangerous) modules.
   gui:
     sockets: [wayland]
+
+  # Forced rootful private X server. The 'x11' module falls back to this.
+  # Tries to set the geometry of the rootful window according to:
+  # SIEVEBOX_X11_GEOMETRY env variable > primary monitor geometry from wayland-info > 1920x1080.
+  x11-rootful:
+    shell_init:
+      - &rootful_x11 |
+        start_rootful_x11() {
+          PRIMARY_GEOM=wayland-info | sed -n 's/.*logical_width: \([0-9]*\), logical_height: \([0-9]*\).*/\1x\2/p' | head -1
+          GEOM=${SIEVEBOX_X11_GEOMETRY:-$PRIMARY_GEOM}
+          Xwayland :10 -geometry "${GEOM:-1920x1080}" -nolisten tcp >/tmp/sievebox-x11.log 2>&1 &
+          for i in $(seq 1 50); do [ -S /tmp/.X11-unix/X10 ] && break; sleep 0.1; done
+          export DISPLAY=:10
+        }
+      - start_rootful_x11
+    incompatible: [x11, x11-dangerous]
+
+  # Preferred private X server: rootless via xwayland-satellite when
+  # available, else rootful Xwayland (using x11-rootful shell_init).
+  # Never touches the host X session.
+  x11:
+    shell_init:
+      - *rootful_x11
+      - |
+        if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+          if command -v xwayland-satellite >/dev/null; then
+            xwayland-satellite >/tmp/sievebox-x11.log 2>&1 &
+            for i in $(seq 1 50); do
+              D=$(sed -n 's/.*Connected to Xwayland on :\([0-9]*\).*/\1/p' /tmp/sievebox-x11.log | head -1)
+              [ -n "$D" ] && break
+              sleep 0.1
+            done
+            [ -n "$D" ] && export DISPLAY=":$D"
+          fi
+          if [ -z "$D" ] && command -v Xwayland >/dev/null; then
+            pkill -x xwayland-satellite 2>/dev/null
+            start_rootful_x11
+          fi
+        fi
+    incompatible: [x11-rootful, x11-dangerous]
+
+  # Weak opt-in: host X session passthrough (can read/inject into other X11
+  # clients). Mutually exclusive with 'x11' and 'x11-rootful' modules.
+  # Besides sandbox being Wayland-first, the x11 socket should allow connections
+  # for X11 only sessions.
+  x11-dangerous:
+    sockets: [x11]
+    incompatible: [x11, x11-rootful]
 
   audio:
     sockets: [pulse, pipewire]
