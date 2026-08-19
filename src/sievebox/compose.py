@@ -54,7 +54,9 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     if app is None:
         raise ConfigError(f"'{app_name}' is not registered in any profile")
     for k, v in app.env.items():
-        env.setdefault(k, v)
+        expanded = capabilities.expand_value(v, env)
+        if expanded is not None and k not in env:
+            env[k] = expanded
 
     fs_relaxed = "filesystem" in relaxed
     ro_fs_relaxed = "ro-filesystem" in relaxed
