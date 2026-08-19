@@ -23,7 +23,8 @@ sandbox with some shiny prompts and indicators that tells you that the sandbox
 is active.
 
 It ships with base profiles for Conda, Node (node, npm, pnpm, npx, yarn, bun),
-Rust, and a generic shell. Personal profiles (agents, specific tools) are added
+Rust, Android development (including Android Virtual Device emulator) and a
+generic shell. Personal profiles (agents, specific tools) are added
 via drop-in files (see below).
 
 You get repeatable, auditable sandboxes defined in YAML instead of ad-hoc shell

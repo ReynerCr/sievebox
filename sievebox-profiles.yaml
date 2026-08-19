@@ -21,8 +21,8 @@
 # Personal modules and app overrides live in ~/.config/sievebox/profiles.d/*.yaml
 
 # Base sandbox applied to every app, in order. Each `args` entry is a bwrap
-# directive (token list); {bin} -> target binary, ~ -> $HOME. ADVANCED: this is
-# the security floor — edit with care.
+# directive (token list); {bin} -> target binary, ~ -> $HOME.
+# ADVANCED: this is the security floor; edit with care.
 core:
   args:
     - [--unshare-all]
@@ -39,10 +39,10 @@ core:
     - [--tmpfs, /tmp]
     - [--tmpfs, /run]
     - [--ro-bind, /usr, /usr]
-    - [--symlink, usr/bin, /bin]
-    - [--symlink, usr/sbin, /sbin]
-    - [--symlink, usr/lib, /lib]
-    - [--symlink, usr/lib64, /lib64]
+    - [--symlink, /usr/sbin, /sbin]
+    - [--symlink, /usr/bin, /bin]
+    - [--symlink, /usr/lib, /lib]
+    - [--symlink, /usr/lib64, /lib64]
     - [--ro-bind, /etc/alternatives, /etc/alternatives]
     - [--ro-bind-try, /etc/fonts, /etc/fonts]
     - [--ro-bind-try, /etc/hosts, /etc/hosts]
@@ -71,11 +71,13 @@ core:
     - [--ro-bind-try, "~/.config/gtk-4.0", "~/.config/gtk-4.0"]
     - [--ro-bind-try, "~/.config/gtkrc", "~/.config/gtkrc"]
     - [--ro-bind-try, "~/.config/gtkrc-2.0", "~/.config/gtkrc-2.0"]
+    - [--ro-bind-try, "/etc/os-release", "/etc/os-release"]
   # Host env vars forwarded into the cleared sandbox (only if set).
-  setenv: [HOME, PATH, USER, LOGNAME, TERM, COLORTERM, LANG, LANGUAGE, LC_ALL, LC_CTYPE, XDG_RUNTIME_DIR, XDG_SESSION_TYPE]
+  setenv: [HOME, PATH, USER, LOGNAME, TERM, COLORTERM, LANG, LANGUAGE, LC_ALL, LC_CTYPE, XDG_RUNTIME_DIR, XDG_SESSION_TYPE, XDG_CURRENT_DESKTOP, XDG_SESSION_DESKTOP]
 
 modules:
 
+  # Module that doesn't have anything, useful for testing base (core) sandbox.
   simple_module:
 
   network:
@@ -142,7 +144,7 @@ modules:
   audio:
     sockets: [pulse, pipewire]
 
-  # mesa focused on amdgpu
+  # Profile for mesa focused on amdgpu.
   gpu:
     devices: [dri]
     filesystem:
@@ -152,7 +154,11 @@ modules:
         - /sys/dev
         - /sys/devices
         - /etc/vulkan
+        - ~/.local/share/vulkan
 
+  # Conda module: shows one use case of the shell_init attribute;
+  # preserves the conda default PS1 override while also auto activating an
+  # environment according to the presence of an env variable (CONDA_ENV).
   conda:
     setenv: [CONDA_ENV]
     shell_init: |
@@ -175,9 +181,9 @@ modules:
       fi
     filesystem:
       ro: [/etc/conda]
-      rw: [~/.conda, ~/.cache/conda, ~/.cache/pip, ~/.condarc, ~/.ipython]
+      rw: [~/.conda, ~/.cache/conda, ~/.cache/pip, ~/.condarc, ~/.ipython, ~/ccache]
 
-  # focused on node installs with pnpm
+  # Focused on node installs with pnpm.
   node:
     setenv: [PNPM_HOME]
     filesystem:
@@ -190,11 +196,15 @@ modules:
         - ~/.config/pnpm
         - ~/.bun
         - ~/.node_repl_history
+        - ~/.cache/ccache
 
   rust:
     filesystem:
-      rw: [~/.cargo]
-
+      rw:
+        - ~/.cargo
+        - ~/.cache/ccache
+        - ~/.rustup
+  
   # android_dev (without device kvm).
   android_dev:
     setenv: [ANDROID_HOME, NDK_HOME, JAVA_HOME]
@@ -215,9 +225,11 @@ modules:
   # /dev/kvm is too dangerous to pass into android_dev directly if user will not
   # use an emulator. Preferred to have a module with it to accompany with
   # --modules parameter.
+  # X11 (Xwayland or not) is optional as android emulator AVD can be run
+  # headless (so it wouldn't need a display server to render itself).
   android_emul:
     devices: [kvm]
-    extends: [android_dev, gui, gpu, audio, x11]
+    extends: [android_dev, gpu]
     filesystem:
       rw:
         - ~/.emulator_console_auth_token
@@ -226,3 +238,4 @@ apps:
   conda:    { modules: [conda, network], color: 184 }
   "npm, pnpm, yarn, npx, node, bun": { modules: [node, network], color: 226 }
   bash:     { modules: [simple_module], color: 183 }
+  emulator: { modules: [android_emul] } # made for headless, add gui and audio if you want them

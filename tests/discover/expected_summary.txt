@@ -2,7 +2,7 @@
 # [exists]=on host, a real bind candidate;  [missing]=app probe, not on disk
 # count  tag  path    -> failures.log is the raw source of truth
 
-== Most likely culprits (just before exit) ==
+== Most likely culprits for a crash (just before exit) ==
      1  [missing] /home/user/.env.local
      1  [missing] /home/user/.env
      1  [missing] /home/user/project/.env.local

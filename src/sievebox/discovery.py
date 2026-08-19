@@ -371,7 +371,7 @@ def build_summary(failures: list[dict], probing: list[dict],
         lines.append("== Project detection ==")
         lines.append(detect_text.rstrip())
 
-    # Most likely culprits
+    # Most likely culprits for a crash
     if fatal > 0:
         culprits = [
             r for r in failures
@@ -381,7 +381,7 @@ def build_summary(failures: list[dict], probing: list[dict],
         culprits = culprits[:15]
         if culprits:
             lines.append("")
-            lines.append("== Most likely culprits (just before exit) ==")
+            lines.append("== Most likely culprits for a crash (just before exit) ==")
             for r in culprits:
                 lab = "[exists]" if r["exists"] == "E" else "[missing]"
                 lines.append(f"{r['count']:6d}  {lab:<9s} {r['path']}")

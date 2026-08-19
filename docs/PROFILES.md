@@ -60,9 +60,11 @@ modules:
   `x11` socket binds the host X session (used only by `x11-dangerous`, weak by
   design). For X11 apps, prefer the `x11` / `x11-rootful` modules, which run a
   private X server inside the sandbox.
-- `devices`: device names under `/dev` (e.g. `dri`).
+- `devices`: device names under `/dev` (e.g. `dri`, `kvm`).
 - `extends`: list of base modules to inherit binds from (pulled in first, deduped,
   cycle-protected).
+- `incompatible`: list of modules that cannot be active together; composition
+  fails with an error if two incompatible modules end up in the effective set.
 - `setenv`: env var names to forward past `--clearenv`.
 - `shell_init`: an optional shell snippet fused into the sandbox launch (used
   e.g. by the Conda module to auto-activate an env). The app's color is
