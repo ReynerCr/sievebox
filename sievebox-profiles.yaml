@@ -195,6 +195,33 @@ modules:
     filesystem:
       rw: [~/.cargo]
 
+  # android_dev (without device kvm).
+  android_dev:
+    setenv: [ANDROID_HOME, NDK_HOME, JAVA_HOME]
+    extends: [network]
+    filesystem:
+      rw:
+        - ~/Android
+        - ~/.android
+        - ~/.composer
+        - ~/.gradle
+        - ~/.jdks
+        - ~/.java
+        - ~/.local/share/Google
+        - ~/.cache/Google
+      ro:
+        - /opt/android-studio
+
+  # /dev/kvm is too dangerous to pass into android_dev directly if user will not
+  # use an emulator. Preferred to have a module with it to accompany with
+  # --modules parameter.
+  android_emul:
+    devices: [kvm]
+    extends: [android_dev, gui, gpu, audio, x11]
+    filesystem:
+      rw:
+        - ~/.emulator_console_auth_token
+
 apps:
   conda:    { modules: [conda, network], color: 184 }
   "npm, pnpm, yarn, npx, node, bun": { modules: [node, network], color: 226 }
