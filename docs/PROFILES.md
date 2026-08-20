@@ -20,8 +20,8 @@ own modules and app overrides in `~/.config/sievebox/profiles.d/personal.yaml`.
 
 When a drop-in defines a module or app that already exists in the base, the
 entries are merged. The default is **deep-merge**: scalars (color, allow_home, …)
-are later-wins, lists (filesystem paths, modules, setenv, raw_args, …) are
-appended with dedup, and dicts (env) are merged per-key. The one exception is
+are later-wins, lists (filesystem paths, modules, raw_args, …) are appended
+with dedup, and dicts (`env`, `setenv`) are merged per-key. The one exception is
 `core:`, which is first-wins: the security floor cannot be relaxed from a
 drop-in.
 
@@ -65,7 +65,9 @@ modules:
   cycle-protected).
 - `incompatible`: list of modules that cannot be active together; composition
   fails with an error if two incompatible modules end up in the effective set.
-- `setenv`: env var names to forward past `--clearenv`.
+- `setenv`: env vars to forward past `--clearenv`. Bare names forward the host
+  value, and a mapping declares values that cross into the sandbox
+  (see [below](#forward-an-env-var-past---clearenv)).
 - `shell_init`: an optional shell snippet fused into the sandbox launch (used
   e.g. by the Conda module to auto-activate an env). The app's color is
   available as `$SIEVEBOX_COLOR` (a 256-color code) for use in `tput` or ANSI escapes.
@@ -83,8 +85,10 @@ apps:
     modules: [node, webdev, network, mytool]
     color: 208          # optional; defaults to engine color (39, bright cyan)
     allow_home: true    # default: false
-    env:                # set in host env only if currently unset
+    setenv:             # optional, same forms as module setenv (strongest layer)
       MYTOOL_CONFIG: /etc/mytool.conf
+    env:                # compose-time value pool; never reaches the sandbox alone
+      MYTOOL_DIR: ~/.config/mytool
 ```
 
 Multiple binaries that share the same config can be listed in one
@@ -106,8 +110,12 @@ apps:
 ### Forward an env var past `--clearenv`
 
 The sandbox starts from an empty environment and only re-introduces an explicit
-allowlist (so host secrets like API tokens don't leak in). To let a module pass
-one of its own variables through, add it to `setenv`:
+allowlist (so host secrets like API tokens don't leak in). The base allowlist
+(`HOME`, `PATH`, `TERM`, locale/display vars, …) lives in `core.setenv` in the
+YAML. **Be careful while passing secrets.**
+
+`setenv` accepts two forms. A list of names forwards the matching host env
+vars (used only if the host value exists):
 
 ```yaml
 modules:
@@ -115,8 +123,39 @@ modules:
     setenv: [PNPM_HOME]
 ```
 
-The base allowlist (`HOME`, `PATH`, `TERM`, locale/display vars, …) lives in
-`core.setenv` in the YAML. **Be careful while passing secrets.**
+A mapping declares values. A null value (`FOO:`) means the same as listing the
+bare name; a scalar value is a declared literal that crosses into the sandbox:
+
+```yaml
+modules:
+  android_dev:
+    setenv: {JAVA_HOME: ~/.jdks/jbr-21.0.11}
+```
+
+Declared values support the same expansion as filesystem paths: `~`, `$VAR`,
+and `${VAR}` resolve at compose time against the host env plus the app's `env`
+values. A value referencing an unset `$VAR` is dropped (the variable is not
+passed at all). Non-string YAML scalars (`FOO: 1`, `FOO: true`) are coerced to
+strings; an actually-empty value requires `FOO: ""` (plain `FOO:` forwards the
+host value instead).
+
+When the same name is declared in several places, the strongest wins:
+core < modules in effective order (later wins) < app. A declaration always
+beats the host env, while a bare name only forwards a host value if one exists
+(falling back to the app's `env` values). Apps also accept a `setenv` key with
+the same two forms.
+
+The app's `env` key is a pool of values used only while composing: it resolves
+`$VAR`s inside declared `setenv` values and backs bare names whose host value
+is unset. It never reaches the sandbox on its own.
+
+```yaml
+apps:
+  emulator:
+    env:
+      SDK: ~/Android/Sdk      # expansion source, not passed by itself
+    setenv: {ANDROID_SDK: $SDK/platform-tools}
+```
 
 ### Host policy knobs
 
