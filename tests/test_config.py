@@ -49,7 +49,7 @@ def test_deep_merge_module_adds_filesystem_paths(tmp_path):
     m = cfg.modules["node"]
     assert m.fs_rw == ["~/.npm", "~/.cache/pnpm", "~/.custom-node"]
     assert m.fs_ro == ["~/.npmrc"]
-    assert m.setenv == ["PNPM_HOME"]
+    assert m.setenv == {"PNPM_HOME": None}
 
 
 def test_deep_merge_app_changes_color(tmp_path):
@@ -106,7 +106,7 @@ def test_override_mode_replaces_module_entirely(tmp_path):
     })
     cfg = load_config([base, dropin])
     m = cfg.modules["node"]
-    assert m.setenv == []
+    assert m.setenv == {}
     assert m.fs_ro == []
     assert m.fs_rw == ["~/.custom-node"]
 
@@ -738,3 +738,78 @@ def test_host_env_wins_over_app_env(tmp_path):
     comp = _compose_env_app(tmp_path, {"FOO": "from-profile"}, ["FOO"],
                             env={"FOO": "from-host"})
     assert _setenv_value(comp.bwrap_args, "FOO") == "from-host"
+
+
+# --- setenv mapping form ---
+
+def test_setenv_list_form_bare_names(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": ["FOO", "BAR"]}},
+        "apps": {"app": {"modules": ["m"], "setenv": ["BAZ"]}},
+        "core": {"setenv": ["PATH"]},
+    })
+    cfg = load_config([base])
+    assert cfg.modules["m"].setenv == {"FOO": None, "BAR": None}
+    assert cfg.apps["app"].setenv == {"BAZ": None}
+    assert cfg.core.setenv == {"PATH": None}
+
+
+def test_setenv_mapping_form(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": {"PATH": None, "FOO": "literal"}}},
+        "apps": {"app": {"modules": ["m"], "setenv": {"BAR": "x"}}},
+    })
+    cfg = load_config([base])
+    assert cfg.modules["m"].setenv == {"PATH": None, "FOO": "literal"}
+    assert cfg.apps["app"].setenv == {"BAR": "x"}
+
+
+def test_setenv_scalar_coercion(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": {"N": 1, "B": True, "F": 1.5, "S": "str"}}},
+    })
+    cfg = load_config([base])
+    assert cfg.modules["m"].setenv == {"N": "1", "B": "True", "F": "1.5", "S": "str"}
+
+
+def test_setenv_list_and_mapping_merge_across_files(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": ["FOO", "BAR"]}},
+    })
+    dropin = _write(tmp_path / "dropin.yaml", {
+        "modules": {"m": {"setenv": {"FOO": "declared", "BAZ": "other"}}},
+    })
+    cfg = load_config([base, dropin])
+    assert cfg.modules["m"].setenv == {"FOO": "declared", "BAR": None, "BAZ": "other"}
+
+
+def test_setenv_scalar_rejected(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": "HOME"}},
+    })
+    with pytest.raises(ConfigError, match="module 'm': 'setenv' must be a list of names"):
+        load_config([base])
+
+
+def test_setenv_non_scalar_value_rejected(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": {"FOO": ["a", "b"]}}},
+    })
+    with pytest.raises(ConfigError, match="setenv value for 'FOO' must be a scalar or null"):
+        load_config([base])
+
+
+def test_setenv_non_string_list_item_rejected(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": [42]}},
+    })
+    with pytest.raises(ConfigError, match="setenv entries must be names"):
+        load_config([base])
+
+
+def test_setenv_non_string_name_rejected(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": {42: "x"}}},
+    })
+    with pytest.raises(ConfigError, match="setenv name must be a string"):
+        load_config([base])

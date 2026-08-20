@@ -22,7 +22,7 @@ DEFAULT_COLOR = "39"
 #   dict with ro/rw list sub-keys), or "env" (nested dict with string values).
 _MODULE_SCHEMA = {
     "extends":      {"merge": "list",   "type": list},
-    "setenv":       {"merge": "list",   "type": list},
+    "setenv":       {"merge": "env",    "type": dict, "value_type": (str, type(None))},
     "shell_init":   {"merge": "scalar", "type": (str, list), "item_type": str},
     "incompatible": {"merge": "list",   "type": list, "item_type": str},
     "filesystem":   {"merge": "filesystem", "type": dict},
@@ -36,6 +36,7 @@ _APP_SCHEMA = {
     "color":      {"merge": "scalar", "type": (str, int)},
     "allow_home": {"merge": "scalar", "type": bool},
     "env":        {"merge": "env",    "type": dict, "value_type": str},
+    "setenv":     {"merge": "env",    "type": dict, "value_type": (str, type(None))},
 }
 
 VALID_MERGE_MODES = {"deep", "override"}
@@ -49,7 +50,7 @@ class ConfigError(Exception):
 class Module:
     name: str
     extends: list[str] = field(default_factory=list)
-    setenv: list[str] = field(default_factory=list)
+    setenv: dict[str, str | None] = field(default_factory=dict)
     shell_init: str = ""
     incompatible: list[str] = field(default_factory=list)
     fs_ro: list[str] = field(default_factory=list)
@@ -66,12 +67,13 @@ class App:
     color: str = ""
     allow_home: bool = False
     env: dict[str, str] = field(default_factory=dict)
+    setenv: dict[str, str | None] = field(default_factory=dict)
 
 
 @dataclass
 class Core:
     args: list[list[str]] = field(default_factory=list)
-    setenv: list[str] = field(default_factory=list)
+    setenv: dict[str, str | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -136,6 +138,64 @@ def _as_list(value: object) -> list:
     if value is None:
         return []
     return value if isinstance(value, list) else [value]
+
+
+def _normalize_setenv(value: object, label: str) -> dict[str, str | None]:
+    """Canonical setenv form: name -> None (forward host value) or literal.
+
+    Accepts a list of names (all bare) or a mapping where a null value means
+    bare forwarding and a scalar value is a declared literal (str()-coerced).
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        out: dict[str, str | None] = {}
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise ConfigError(f"{label}: setenv name must be a string, got {k!r}")
+            if v is None:
+                out[k] = None
+            elif isinstance(v, (str, int, float, bool)):
+                out[k] = str(v)
+            else:
+                raise ConfigError(f"{label}: setenv value for '{k}' must be a scalar or null")
+        return out
+    if isinstance(value, list):
+        out = {}
+        for item in value:
+            if not isinstance(item, str):
+                raise ConfigError(f"{label}: setenv entries must be names (strings)")
+            out[item] = None
+        return out
+    raise ConfigError(f"{label}: 'setenv' must be a list of names or a name -> value mapping")
+
+
+def _normalize_setenvs(raw: dict, errs: list[str]) -> dict:
+    """Normalize every setenv entry (core, modules, apps) to the mapping form.
+
+    Runs per file, before merging, so list and mapping forms from different
+    files merge uniformly (per-key, later file wins). Invalid shapes are
+    reported into `errs` and replaced with an empty mapping so merging and
+    structural validation can proceed and report all errors at once.
+    """
+    def norm(value: object, label: str) -> dict:
+        try:
+            return _normalize_setenv(value, label)
+        except ConfigError as e:
+            errs.append(str(e))
+            return {}
+
+    core = raw.get("core")
+    if isinstance(core, dict) and "setenv" in core:
+        core["setenv"] = norm(core["setenv"], "core")
+    for section in ("modules", "apps"):
+        entries = raw.get(section)
+        if not isinstance(entries, dict):
+            continue
+        for name, spec in entries.items():
+            if isinstance(spec, dict) and "setenv" in spec:
+                spec["setenv"] = norm(spec["setenv"], f"{section[:-1]} '{name}'")
+    return raw
 
 
 def _dedup_append(base_list: list, extra: list) -> list:
@@ -272,6 +332,7 @@ def _build_app(name: str, spec: dict) -> App:
         color=str(spec.get("color", "")),
         allow_home=bool(spec.get("allow_home", False)),
         env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
+        setenv=spec.get("setenv") or {},
     )
 
 
@@ -295,6 +356,8 @@ def _type_name(t: type | tuple) -> str:
         return "mapping"
     if t is str:
         return "string"
+    if t is type(None):
+        return "null"
     return t.__name__
 
 
@@ -350,6 +413,7 @@ def _check_unknown_keys(merged: dict, merged_globs: dict) -> list[str]:
 def load_config(paths: list[Path]) -> Config:
     merged: dict = {}
     merged_globs: dict = {}
+    norm_errs: list[str] = []
     for path in paths:
         try:
             raw = yaml.safe_load(path.read_text()) or {}
@@ -357,6 +421,7 @@ def load_config(paths: list[Path]) -> Config:
             raise ConfigError(f"{path}: invalid YAML: {e}") from e
         if not isinstance(raw, dict):
             raise ConfigError(f"{path}: top level must be a mapping")
+        raw = _normalize_setenvs(raw, norm_errs)
         exact_apps, glob_apps = _normalize_app_keys(raw, path)
         raw = dict(raw)
         raw["apps"] = exact_apps
@@ -367,7 +432,8 @@ def load_config(paths: list[Path]) -> Config:
 
     cfg = Config(paths=paths)
 
-    errs = _validate_entry_structure(merged, merged_globs)
+    errs = norm_errs
+    errs += _validate_entry_structure(merged, merged_globs)
     errs += _check_unknown_keys(merged, merged_globs)
     if errs:
         files = ", ".join(str(p) for p in paths)
@@ -376,7 +442,7 @@ def load_config(paths: list[Path]) -> Config:
     core_raw = merged.get("core") or {}
     cfg.core = Core(
         args=[[str(t) for t in d] for d in (core_raw.get("args") or [])],
-        setenv=[str(s) for s in (core_raw.get("setenv") or [])],
+        setenv=core_raw.get("setenv") or {},
     )
 
     for name, spec in (merged.get("modules") or {}).items():
@@ -388,7 +454,7 @@ def load_config(paths: list[Path]) -> Config:
         cfg.modules[name] = Module(
             name=name,
             extends=_as_list(spec.get("extends")),
-            setenv=_as_list(spec.get("setenv")),
+            setenv=spec.get("setenv") or {},
             shell_init=shell_init,
             incompatible=_as_list(spec.get("incompatible")),
             fs_ro=_as_list(fs.get("ro")),
