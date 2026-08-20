@@ -32,11 +32,11 @@ _MODULE_SCHEMA = {
 }
 
 _APP_SCHEMA = {
-    "modules":    {"merge": "list",   "type": list},
-    "color":      {"merge": "scalar", "type": (str, int)},
-    "allow_home": {"merge": "scalar", "type": bool},
-    "env":        {"merge": "env",    "type": dict, "value_type": str},
-    "setenv":     {"merge": "env",    "type": dict, "value_type": (str, type(None))},
+    "modules":      {"merge": "list",   "type": list},
+    "color":        {"merge": "scalar", "type": (str, int)},
+    "allow_home":   {"merge": "scalar", "type": bool},
+    "compose_env":  {"merge": "env",    "type": dict, "value_type": str},
+    "setenv":       {"merge": "env",    "type": dict, "value_type": (str, type(None))},
 }
 
 VALID_MERGE_MODES = {"deep", "override"}
@@ -66,7 +66,7 @@ class App:
     modules: list[str] = field(default_factory=list)
     color: str = ""
     allow_home: bool = False
-    env: dict[str, str] = field(default_factory=dict)
+    compose_env: dict[str, str] = field(default_factory=dict)
     setenv: dict[str, str | None] = field(default_factory=dict)
 
 
@@ -331,7 +331,7 @@ def _build_app(name: str, spec: dict) -> App:
         modules=_as_list(spec.get("modules")),
         color=str(spec.get("color", "")),
         allow_home=bool(spec.get("allow_home", False)),
-        env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
+        compose_env={str(k): str(v) for k, v in (spec.get("compose_env") or {}).items()},
         setenv=spec.get("setenv") or {},
     )
 

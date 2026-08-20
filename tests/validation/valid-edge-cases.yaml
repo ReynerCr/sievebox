@@ -72,7 +72,7 @@ apps:
     modules: [minimal]
     color: 100
     allow_home: true
-    env:
+    compose_env:
       FOO: bar
       BAZ: qux
 
@@ -80,7 +80,7 @@ apps:
   "test-*":
     modules: [minimal]
     color: 200
-    env:
+    compose_env:
       GLOB_MATCHED: "1"
 
   # color as string (valid)
@@ -101,14 +101,14 @@ apps:
   setenv_compose:
     modules: [mixed_setenv]
     setenv: {JAVA_HOME: "$JAVA_ROOT/jdk"}
-    env:
+    compose_env:
       BARE_VAR: from-env
       JAVA_ROOT: /opt/java
 
   # env with no values
   empty_env:
     modules: [minimal]
-    env: {}
+    compose_env: {}
 
   # No modules (caught by semantic validation, not structural: omitted on purpose)
   # no_modules_app:

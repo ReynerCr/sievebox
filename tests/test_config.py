@@ -31,7 +31,7 @@ def _base_yaml() -> dict:
             "network": {"raw_args": [["--share-net"]]},
         },
         "apps": {
-            "npm": {"modules": ["node", "network"], "color": "226", "env": {"FOO": "bar"}},
+            "npm": {"modules": ["node", "network"], "color": "226", "compose_env": {"FOO": "bar"}},
         },
     }
 
@@ -86,10 +86,10 @@ def test_deep_merge_app_adds_modules(tmp_path):
 def test_deep_merge_app_merges_env(tmp_path):
     base = _write(tmp_path / "base.yaml", _base_yaml())
     dropin = _write(tmp_path / "drop.yaml", {
-        "apps": {"npm": {"env": {"EXTRA": "1"}}},
+        "apps": {"npm": {"compose_env": {"EXTRA": "1"}}},
     })
     cfg = load_config([base, dropin])
-    assert cfg.apps["npm"].env == {"FOO": "bar", "EXTRA": "1"}
+    assert cfg.apps["npm"].compose_env == {"FOO": "bar", "EXTRA": "1"}
 
 
 # --- override mode ---
@@ -123,7 +123,7 @@ def test_override_mode_replaces_app_entirely(tmp_path):
     assert a.modules == ["gui"]
     assert a.color == "100"
     assert "network" not in a.modules
-    assert a.env == {}
+    assert a.compose_env == {}
 
 
 # --- default color ---
@@ -479,12 +479,12 @@ modules:
 apps:
   x:
     modules: [m]
-    env:
+    compose_env:
       MY_PATH: *s
 """)
     cfg = load_config([tmp_path / "base.yaml"])
     assert cfg.modules["m"].fs_rw == ["/some/path"]
-    assert cfg.apps["x"].env == {"MY_PATH": "/some/path"}
+    assert cfg.apps["x"].compose_env == {"MY_PATH": "/some/path"}
 
 
 # --- Negative: misplaced keys inside sub-objects ---
@@ -540,7 +540,7 @@ def test_allow_home_as_string_rejected(tmp_path):
 def test_env_value_non_string_rejected(tmp_path):
     _write(tmp_path / "base.yaml", {
         "modules": {"m": {}},
-        "apps": {"x": {"modules": ["m"], "env": {"MY_VAR": 42}}},
+        "apps": {"x": {"modules": ["m"], "compose_env": {"MY_VAR": 42}}},
     })
     with pytest.raises(ConfigError, match="env.*MY_VAR.*must be a string"):
         load_config([tmp_path / "base.yaml"])
@@ -582,7 +582,7 @@ def test_valid_edge_cases_setenv_forms():
                         "EXPANDED_VAR": "$HOME/expanded"}
     a = cfg.apps["setenv_compose"]
     assert a.setenv == {"JAVA_HOME": "$JAVA_ROOT/jdk"}
-    assert a.env == {"BARE_VAR": "from-env", "JAVA_ROOT": "/opt/java"}
+    assert a.compose_env == {"BARE_VAR": "from-env", "JAVA_ROOT": "/opt/java"}
 
 
 def test_valid_edge_cases_compose_setenv():
@@ -722,7 +722,7 @@ def _setenv_value(bwrap_args: list[str], name: str) -> str | None:
 def _compose_env_app(tmp_path, app_env: dict, setenv_names: list[str], env: dict):
     base = _write(tmp_path / "base.yaml", {
         "modules": {"m": {"setenv": setenv_names}},
-        "apps": {"app": {"modules": ["m"], "env": app_env}},
+        "apps": {"app": {"modules": ["m"], "compose_env": app_env}},
     })
     cfg = load_config([base])
     return compose(cfg, "app", here="/tmp", home="/home/user", env=env)
@@ -879,7 +879,7 @@ def test_bare_name_forwards_host_env(tmp_path):
 def test_bare_name_falls_back_to_app_env(tmp_path):
     base = _write(tmp_path / "base.yaml", {
         "modules": {"m": {"setenv": {"FOO": None}}},
-        "apps": {"app": {"modules": ["m"], "env": {"FOO": "from-env"}}},
+        "apps": {"app": {"modules": ["m"], "compose_env": {"FOO": "from-env"}}},
     })
     cfg = load_config([base])
     comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
@@ -939,9 +939,32 @@ def test_declared_value_with_unset_var_dropped(tmp_path):
 def test_declared_value_composes_with_app_env(tmp_path):
     base = _write(tmp_path / "base.yaml", {
         "modules": {"m": {"setenv": {"FOO": "$SDK/tools"}}},
-        "apps": {"app": {"modules": ["m"], "env": {"SDK": "$HOME/Android/Sdk"}}},
+        "apps": {"app": {"modules": ["m"], "compose_env": {"SDK": "$HOME/Android/Sdk"}}},
     })
     cfg = load_config([base])
     comp = compose(cfg, "app", here="/tmp", home="/home/user",
                    env={"HOME": "/home/user"})
     assert _setenv_value(comp.bwrap_args, "FOO") == "/home/user/Android/Sdk/tools"
+
+
+# --- env -> compose_env rename ---
+
+def test_old_env_key_rejected_with_rename_hint(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"app": {"modules": ["m"], "env": {"FOO": "bar"}}},
+    })
+    with pytest.raises(ConfigError, match="unknown key\(s\): env"):
+        load_config([base])
+
+
+def test_compose_env_key_accepted(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": ["FOO"]}},
+        "apps": {"app": {"modules": ["m"], "compose_env": {"FOO": "bar"}}},
+    })
+    cfg = load_config([base])
+    assert cfg.apps["app"].compose_env == {"FOO": "bar"}
+    # bare setenv name falls back to compose_env when host value is unset
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
+    assert _setenv_value(comp.bwrap_args, "FOO") == "bar"
