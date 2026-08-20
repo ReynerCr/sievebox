@@ -3,7 +3,8 @@
 # Schema:
 #   modules: reusable permission bundles
 #     extends     base modules to inherit (expanded base-first)
-#     setenv      host env vars to forward into the sandbox
+#     setenv      env vars to forward into the sandbox: bare names forward the
+#                 host value, a mapping declares values (~ and $VAR expanded)
 #     shell_init  raw bash run inside the sandbox at launch
 #     filesystem  ro / rw path lists; ~ and $VAR expanded, existence-gated,
 #                 entries with an unset $VAR are skipped
@@ -11,11 +12,13 @@
 #     devices     device names under /dev (e.g. dri)
 #     raw_args    raw bwrap directives (token lists); {bin} -> target binary,
 #                 ~ -> $HOME. Appended after core args in module order.
-#   apps: binary -> { modules, root, color, allow_home, env }
+#   apps: binary -> { modules, root, color, allow_home, env, setenv }
 #     color       256-color code for the sandbox prompt (optional; defaults to 39)
 #     allow_home default false   (permit running directly in $HOME)
 #     root       module driving the prompt color (default: first module)
-#     env        values set in the host env only if currently unset
+#     env        compose-time value pool: expansion source for $VARs in
+#                setenv values and fallback for bare names, never passed in
+#     setenv     same forms as module setenv (strongest precedence layer)
 #   core: base sandbox applied to every app (args / setenv)
 #
 # Personal modules and app overrides live in ~/.config/sievebox/profiles.d/*.yaml

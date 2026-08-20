@@ -58,6 +58,13 @@ modules:
         export OTHER="$MY_VAR"
       fi
 
+  # setenv in mapping form: bare (null) and declared values mixed
+  mixed_setenv:
+    setenv:
+      BARE_VAR:
+      DECLARED_VAR: "direct value"
+      EXPANDED_VAR: "$HOME/expanded"
+
 apps:
 
   # Comma-expanded keys (handled before structural validation)
@@ -89,6 +96,14 @@ apps:
   # allow_home omitted (defaults to false)
   defaults_only:
     modules: [minimal]
+
+  # setenv and env composing: env backs the bare name and expands the declaration
+  setenv_compose:
+    modules: [mixed_setenv]
+    setenv: {JAVA_HOME: "$JAVA_ROOT/jdk"}
+    env:
+      BARE_VAR: from-env
+      JAVA_ROOT: /opt/java
 
   # env with no values
   empty_env:

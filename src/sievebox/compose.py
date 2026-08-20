@@ -87,7 +87,10 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         args = _flatten(cfg.core.args, app_name, home)
 
     shell_inits: list[str] = []
-    setenv_names: list[str] = list(cfg.core.setenv)
+    # Ordered name -> None (forward host/app-env value) or declared literal.
+    # Precedence, weakest to strongest: core, modules in effective order, app.
+    # Last entry wins, and declarations beat host env.
+    setenv_entries: dict[str, str | None] = dict(cfg.core.setenv)
 
     for name in eff:
         mod = cfg.modules[name]
@@ -96,10 +99,14 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         args += _flatten(mod.raw_args, app_name, home)
         if mod.shell_init:
             shell_inits.append(mod.shell_init)
-        setenv_names += capabilities.module_setenv(mod)
+        setenv_entries.update(capabilities.module_setenv(mod))
+    setenv_entries.update(app.setenv)
 
-    for name in setenv_names:
-        val = env.get(name)
+    for name, value in setenv_entries.items():
+        if value is None:
+            val = env.get(name)
+        else:
+            val = capabilities.expand_value(value, env)
         if val:
             args += ["--setenv", name, val]
 

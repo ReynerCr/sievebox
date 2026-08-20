@@ -15,7 +15,7 @@ modules:
   bad_extends_type:
     extends: simple_module
 
-  # setenv must be a list
+  # a bare scalar is not a valid setenv form (must be a list or mapping)
   bad_setenv_type:
     setenv: HOME
 
