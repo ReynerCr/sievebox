@@ -574,6 +574,32 @@ def test_valid_edge_cases_loads_cleanly():
     assert "test-*" in cfg.app_globs
 
 
+def test_valid_edge_cases_setenv_forms():
+    """New setenv forms in valid-edge-cases.yaml load to the canonical shape."""
+    cfg = load_config([VALIDATION_DIR / "valid-edge-cases.yaml"])
+    m = cfg.modules["mixed_setenv"]
+    assert m.setenv == {"BARE_VAR": None, "DECLARED_VAR": "direct value",
+                        "EXPANDED_VAR": "$HOME/expanded"}
+    a = cfg.apps["setenv_compose"]
+    assert a.setenv == {"JAVA_HOME": "$JAVA_ROOT/jdk"}
+    assert a.env == {"BARE_VAR": "from-env", "JAVA_ROOT": "/opt/java"}
+
+
+def test_valid_edge_cases_compose_setenv():
+    """The setenv_compose app composes: expansion, fallback, declaration."""
+    cfg = load_config([VALIDATION_DIR / "valid-edge-cases.yaml"])
+    env = {"HOME": "/home/user"}
+    comp = compose(cfg, "setenv_compose", here="/tmp", home="/home/user", env=env)
+    # bare name: no host value, so the app env fallback applies
+    assert _setenv_value(comp.bwrap_args, "BARE_VAR") == "from-env"
+    # declared literal passes through untouched (no expansion references)
+    assert _setenv_value(comp.bwrap_args, "DECLARED_VAR") == "direct value"
+    # declared value expands against the merged env (app env + host)
+    assert _setenv_value(comp.bwrap_args, "JAVA_HOME") == "/opt/java/jdk"
+    # module-level declaration expands against host env
+    assert _setenv_value(comp.bwrap_args, "EXPANDED_VAR") == "/home/user/expanded"
+
+
 # --- Existing negative tests that should keep passing ---
 
 
