@@ -32,6 +32,12 @@ _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
     "pipewire": [("ro", "$XDG_RUNTIME_DIR/pipewire-0")],
 }
 
+# socket name -> module names it cannot coexist with. Sockets absent from
+# this map have no module conflicts.
+SOCKET_CONFLICTS: dict[str, list[str]] = {
+    "x11": ["x11", "x11-rootful"],
+}
+
 # Known socket names (derived from _SOCKET_BINDS keys).
 KNOWN_SOCKETS: set[str] = set(_SOCKET_BINDS)
 
