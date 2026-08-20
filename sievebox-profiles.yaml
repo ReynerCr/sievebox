@@ -12,11 +12,11 @@
 #     devices     device names under /dev (e.g. dri)
 #     raw_args    raw bwrap directives (token lists); {bin} -> target binary,
 #                 ~ -> $HOME. Appended after core args in module order.
-#   apps: binary -> { modules, root, color, allow_home, env, setenv }
+#   apps: binary -> { modules, root, color, allow_home, compose_env, setenv }
 #     color       256-color code for the sandbox prompt (optional; defaults to 39)
 #     allow_home default false   (permit running directly in $HOME)
 #     root       module driving the prompt color (default: first module)
-#     env        compose-time value pool: expansion source for $VARs in
+#     compose_env  compose-time value pool: expansion source for $VARs in
 #                setenv values and fallback for bare names, never passed in
 #     setenv     same forms as module setenv (strongest precedence layer)
 #   core: base sandbox applied to every app (args / setenv)

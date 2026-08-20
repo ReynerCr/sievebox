@@ -53,7 +53,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     app = find_app(cfg, app_name)
     if app is None:
         raise ConfigError(f"'{app_name}' is not registered in any profile")
-    for k, v in app.env.items():
+    for k, v in app.compose_env.items():
         expanded = capabilities.expand_value(v, env)
         if expanded is not None and k not in env:
             env[k] = expanded

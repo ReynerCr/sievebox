@@ -74,15 +74,25 @@ apps:
   bad_modules_type:
     modules: simple_module
 
-  # env must be a mapping
-  bad_env_type:
+  # the old 'env' key is rejected as unknown (rename it to compose_env)
+  bad_env_renamed_scalar:
     modules: [simple_module]
     env: PATH
 
-  # env values must be strings
-  bad_env_value:
+  bad_env_renamed_mapping:
     modules: [simple_module]
     env:
+      MY_VAR: 42
+
+  # compose_env must be a mapping
+  bad_compose_env_type:
+    modules: [simple_module]
+    compose_env: PATH
+
+  # compose_env values must be strings
+  bad_compose_env_value:
+    modules: [simple_module]
+    compose_env:
       MY_VAR: 42
 
   # unknown keys on an app (extends and filesystem are module keys)

@@ -21,7 +21,7 @@ own modules and app overrides in `~/.config/sievebox/profiles.d/personal.yaml`.
 When a drop-in defines a module or app that already exists in the base, the
 entries are merged. The default is **deep-merge**: scalars (color, allow_home, …)
 are later-wins, lists (filesystem paths, modules, raw_args, …) are appended
-with dedup, and dicts (`env`, `setenv`) are merged per-key. The one exception is
+with dedup, and dicts (`compose_env`, `setenv`) are merged per-key. The one exception is
 `core:`, which is first-wins: the security floor cannot be relaxed from a
 drop-in.
 
@@ -87,7 +87,7 @@ apps:
     allow_home: true    # default: false
     setenv:             # optional, same forms as module setenv (strongest layer)
       MYTOOL_CONFIG: /etc/mytool.conf
-    env:                # compose-time value pool; never reaches the sandbox alone
+    compose_env:        # compose-time value pool; never reaches the sandbox alone
       MYTOOL_DIR: ~/.config/mytool
 ```
 
@@ -133,26 +133,27 @@ modules:
 ```
 
 Declared values support the same expansion as filesystem paths: `~`, `$VAR`,
-and `${VAR}` resolve at compose time against the host env plus the app's `env`
-values. A value referencing an unset `$VAR` is dropped (the variable is not
-passed at all). Non-string YAML scalars (`FOO: 1`, `FOO: true`) are coerced to
-strings; an actually-empty value requires `FOO: ""` (plain `FOO:` forwards the
-host value instead).
+and `${VAR}` resolve at compose time against the host env plus the app's
+`compose_env` values. A value referencing an unset `$VAR` is dropped (the
+variable is not passed at all). Non-string YAML scalars (`FOO: 1`,
+`FOO: true`) are coerced to strings, and an actually-empty value requires
+`FOO: ""` (plain `FOO:` forwards the host value instead).
 
 When the same name is declared in several places, the strongest wins:
 core < modules in effective order (later wins) < app. A declaration always
 beats the host env, while a bare name only forwards a host value if one exists
-(falling back to the app's `env` values). Apps also accept a `setenv` key with
-the same two forms.
+(falling back to the app's `compose_env` values). Apps also accept a `setenv`
+key with the same two forms.
 
-The app's `env` key is a pool of values used only while composing: it resolves
-`$VAR`s inside declared `setenv` values and backs bare names whose host value
-is unset. It never reaches the sandbox on its own.
+The app's `compose_env` key is a pool of values used only while composing: it
+resolves `$VAR`s inside declared `setenv` values and backs bare names whose
+host value is unset. It never reaches the sandbox on its own. (The key was
+previously named `env`, hence the explicit name now.)
 
 ```yaml
 apps:
   emulator:
-    env:
+    compose_env:
       SDK: ~/Android/Sdk      # expansion source, not passed by itself
     setenv: {ANDROID_SDK: $SDK/platform-tools}
 ```

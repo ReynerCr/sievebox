@@ -12,7 +12,9 @@ invalid config (tests/validation/structural-errors.yaml):
   app 'bad_color_type': 'color' must be a string or int
   app 'bad_allow_home_type': 'allow_home' must be a bool
   app 'bad_modules_type': 'modules' must be a list
-  app 'bad_env_type': 'env' must be a mapping
-  app 'bad_env_value': env['MY_VAR'] must be a string
+  app 'bad_compose_env_type': 'compose_env' must be a mapping
+  app 'bad_compose_env_value': compose_env['MY_VAR'] must be a string
   module 'bad_unknown' has unknown key(s): allow_home, color
+  app 'bad_env_renamed_scalar' has unknown key(s): env
+  app 'bad_env_renamed_mapping' has unknown key(s): env
   app 'bad_unknown' has unknown key(s): extends, filesystem
