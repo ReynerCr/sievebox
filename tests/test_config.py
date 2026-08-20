@@ -813,3 +813,109 @@ def test_setenv_non_string_name_rejected(tmp_path):
     })
     with pytest.raises(ConfigError, match="setenv name must be a string"):
         load_config([base])
+
+
+# --- setenv precedence and declared values in compose ---
+
+def _compose_setenv(tmp_path, *, core=None, module=None, app=None, env=None):
+    """Compose an app and return its --setenv map (name -> forwarded value)."""
+    data = {
+        "core": {"setenv": core or {}},
+        "modules": {"m": {"setenv": module or {}}},
+        "apps": {"app": {"modules": ["m"], "setenv": app or {}}},
+    }
+    base = _write(tmp_path / "base.yaml", data)
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env=env or {})
+    out: dict[str, str] = {}
+    for i in range(len(comp.bwrap_args) - 1):
+        if comp.bwrap_args[i] == "--setenv":
+            out[comp.bwrap_args[i + 1]] = comp.bwrap_args[i + 2]
+    out.pop("SIEVEBOX_COLOR", None)
+    return out
+
+
+def test_declared_value_crosses_into_sandbox(tmp_path):
+    got = _compose_setenv(tmp_path, module={"FOO": "literal"})
+    assert got["FOO"] == "literal"
+
+
+def test_declared_value_beats_host_env(tmp_path):
+    got = _compose_setenv(tmp_path, module={"FOO": "declared"}, env={"FOO": "host"})
+    assert got["FOO"] == "declared"
+
+
+def test_bare_name_forwards_host_env(tmp_path):
+    got = _compose_setenv(tmp_path, module={"FOO": None}, env={"FOO": "host"})
+    assert got["FOO"] == "host"
+
+
+def test_bare_name_falls_back_to_app_env(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": {"FOO": None}}},
+        "apps": {"app": {"modules": ["m"], "env": {"FOO": "from-env"}}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
+    got = _setenv_value(comp.bwrap_args, "FOO")
+    assert got == "from-env"
+
+
+def test_precedence_module_beats_core(tmp_path):
+    got = _compose_setenv(
+        tmp_path, core={"FOO": "core"}, module={"FOO": "module"})
+    assert got["FOO"] == "module"
+
+
+def test_precedence_later_module_beats_earlier(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"setenv": {"FOO": "first"}},
+            "b": {"setenv": {"FOO": "second"}},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
+    assert _setenv_value(comp.bwrap_args, "FOO") == "second"
+
+
+def test_precedence_app_beats_module(tmp_path):
+    got = _compose_setenv(
+        tmp_path, module={"FOO": "module"}, app={"FOO": "app"})
+    assert got["FOO"] == "app"
+
+
+def test_later_bare_resets_declaration(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"setenv": {"FOO": "declared"}},
+            "b": {"setenv": ["FOO"]},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={"FOO": "host"})
+    assert _setenv_value(comp.bwrap_args, "FOO") == "host"
+
+
+def test_declared_value_expansion(tmp_path):
+    got = _compose_setenv(
+        tmp_path, module={"FOO": "$HOME/x"}, env={"HOME": "/home/user"})
+    assert got["FOO"] == "/home/user/x"
+
+
+def test_declared_value_with_unset_var_dropped(tmp_path):
+    got = _compose_setenv(tmp_path, module={"FOO": "$TOTALLY_UNSET/x"})
+    assert "FOO" not in got
+
+
+def test_declared_value_composes_with_app_env(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"setenv": {"FOO": "$SDK/tools"}}},
+        "apps": {"app": {"modules": ["m"], "env": {"SDK": "$HOME/Android/Sdk"}}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user",
+                   env={"HOME": "/home/user"})
+    assert _setenv_value(comp.bwrap_args, "FOO") == "/home/user/Android/Sdk/tools"

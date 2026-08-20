@@ -86,11 +86,15 @@ def module_bwrap_args(module: Module) -> list[str]:
     return args
 
 
-def module_setenv(module: Module) -> list[str]:
-    """Env var names a module forwards (declared + socket-derived), deduped."""
-    names = list(module.setenv)
+def module_setenv(module: Module) -> dict[str, str | None]:
+    """Env entries a module forwards (declared + socket-derived), deduped.
+
+    Socket-derived names are bare (forward host value); the module's own
+    declarations win over them for the same name.
+    """
+    out: dict[str, str | None] = {}
     for sock in module.sockets:
         for name in _SOCKET_SETENV.get(sock, []):
-            if name not in names:
-                names.append(name)
-    return names
+            out.setdefault(name, None)
+    out.update(module.setenv)
+    return out
