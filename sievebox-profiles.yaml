@@ -227,7 +227,7 @@ modules:
 
   # /dev/kvm is too dangerous to pass into android_dev directly if user will not
   # use an emulator. Preferred to have a module with it to accompany with
-  # --modules parameter.
+  # --module parameter.
   # X11 (Xwayland or not) is optional as android emulator AVD can be run
   # headless (so it wouldn't need a display server to render itself).
   android_emul:

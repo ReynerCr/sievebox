@@ -164,12 +164,12 @@ only recognized **before** the binary name.
     `relax=bwrap`. When more measures land (e.g. `seccomp` or `rlimits`), `all`
     will expand to cover them too.
 - `--raw`: shorthand for `--relax=all`.
-- `--modules=<module1,module2,...>`: append modules to the app's declared list
+- `--module=<module1,module2,...>`: append modules to the app's declared list
   at runtime, comma-separated. Injected modules go through the same `extends`
   expansion as declared modules. Useful for ad-hoc grants without editing
   profiles. Accepted values: any module name from the active configuration; run
   `sievebox --list` to see available modules.
-  Example: `sievebox --modules=network,gpu mytool`.
+  Example: `sievebox --module=network,gpu mytool`.
 - `-h, --help`: show the usage info.
 
 ## Configuration
@@ -258,7 +258,7 @@ Or, if the `sievebox` binary is on your `$PATH`:
 eval "$(sievebox completion bash)"
 ```
 
-This provides tab-completion for flags, `--modules=` and `--relax=` values
+This provides tab-completion for flags, `--module=` and `--relax=` values
 (including comma-separated multi-segment completion), and registered app names.
 
 ## Roadmap

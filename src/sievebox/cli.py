@@ -37,7 +37,7 @@ Options:
   -v, --verbose           More detail (currently for --list)
       --relax=<measure>    Relax a security measure (bwrap, all, filesystem,
                           ro-filesystem)
-      --modules=<list>    Append modules to the app at runtime (comma-separated)
+      --module=<list>     Append modules to the app at runtime (comma-separated)
       --socket=<list>     Grant host sockets at runtime: wayland, x11, pulse,
                           pipewire (comma-separated)
       --device=<list>     Grant devices at runtime: dri, snd, video, input,
@@ -120,10 +120,10 @@ def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
                     _err(f"invalid --relax value '{val}' (valid: {', '.join(sorted(VALID_RELAX))})")
                     return None, 2
                 args.relaxed.add(val)
-        elif a.startswith("--modules="):
-            vals = [v.strip() for v in a[len("--modules="):].split(",")]
+        elif a.startswith("--module="):
+            vals = [v.strip() for v in a[len("--module="):].split(",")]
             if not any(vals):
-                _err("--modules= requires at least one module name")
+                _err("--module= requires at least one module name")
                 return None, 2
             args.inject_modules.extend(vals)
         elif a.startswith("--socket="):
@@ -155,7 +155,7 @@ def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
 # Flag set for bash completion (includes all completable forms).
 _COMPLETE_FLAGS = [
     "--help", "--list", "--status", "--dry-run", "--discover",
-    "--prompt", "--verbose", "--relax=", "--modules=", "--socket=",
+    "--prompt", "--verbose", "--relax=", "--module=", "--socket=",
     "--device=", "--raw",
     "-h", "-l", "-p", "-v",
 ]
@@ -270,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for mod in args.inject_modules:
         if mod not in cfg.modules:
-            _err(f"unknown module '{mod}' in --modules= (run 'sievebox --list' for available modules)")
+            _err(f"unknown module '{mod}' in --module= (run 'sievebox --list' for available modules)")
             return 1
 
     for sock in args.grant_sockets:

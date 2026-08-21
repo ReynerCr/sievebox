@@ -49,7 +49,7 @@ Returns a `Composition` with the args plus metadata (effective modules,
 color, network, home violation). This is the bridge between the config model
 and the actual bwrap invocation.
 
-**`cli.py`**: Parses command-line flags (`--relax`, `--modules`, `--dry-run`,
+**`cli.py`**: Parses command-line flags (`--relax`, `--module`, `--dry-run`,
 `--discover`, `--list`, `--status`), loads config, and dispatches to the
 appropriate mode. Handles the `--relax=bwrap`/`--raw` fast path (direct exec,
 no sandbox). Builds the final bwrap invocation and either prints it
@@ -89,7 +89,7 @@ SYS, etc.), and produces a classified summary. Uses
   user drop-in. Only the first file that defines `core:` sets it.
 - **Network is a module, not a core toggle.** `--share-net` and cert binds
   live in the `network` module's `raw_args`. This unifies all capability
-  injection under `--modules=`.
+  injection under `--module=`.
 - **`raw_args` on modules.** Arbitrary bwrap directives (e.g. `--share-net`,
   `--symlink`) that aren't filesystem binds or sockets. Appended after core
   args in effective module order.
@@ -101,7 +101,7 @@ SYS, etc.), and produces a classified summary. Uses
 
 - `tests/test_config.py`: config loading, merge semantics, comma/glob keys,
   raw_args, validation.
-- `tests/test_cli.py`: CLI flags, `--relax` modes, `--modules` injection,
+- `tests/test_cli.py`: CLI flags, `--relax` modes, `--module` injection,
   dry-run output.
 - `tests/test_discovery.py`: golden-file tests for the strace classifier,
   project detection.
