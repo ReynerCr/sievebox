@@ -167,9 +167,21 @@ only recognized **before** the binary name.
 - `--module=<module1,module2,...>`: append modules to the app's declared list
   at runtime, comma-separated. Injected modules go through the same `extends`
   expansion as declared modules. Useful for ad-hoc grants without editing
-  profiles. Accepted values: any module name from the active configuration; run
-  `sievebox --list` to see available modules.
+  profiles. Accepted values: any module name from the active configuration
+  (run `sievebox --list` to see available modules).
   Example: `sievebox --module=network,gpu mytool`.
+- `--socket=<socket1,socket2,...>`: grant host sockets at runtime,
+  comma-separated, without a profile module. Same effect as a module whose
+  `sockets:` lists them, including setenv forwarding and conflict checks
+  (e.g. `--socket=x11` cannot combine with the `x11`/`x11-rootful` modules).
+  Valid sockets: `wayland`, `x11`, `pulse`, `pipewire`.
+  Example: `sievebox --socket=x11 mytool`.
+- `--device=<device1,device2,...>`: grant devices at runtime, comma-separated,
+  binding each `/dev/<name>` node into the sandbox. Valid devices: `dri`,
+  `snd`, `video`, `input`, `tty`, `console`, `kvm`.
+  Example: `sievebox --device=kvm mytool`.
+- Runtime grants behave exactly like module grants and appear in `--status`
+  (see [docs/PROFILES.md](docs/PROFILES.md) for the module-vs-grant guidance).
 - `-h, --help`: show the usage info.
 
 ## Configuration
@@ -258,7 +270,8 @@ Or, if the `sievebox` binary is on your `$PATH`:
 eval "$(sievebox completion bash)"
 ```
 
-This provides tab-completion for flags, `--module=` and `--relax=` values
+This provides tab-completion for flags, `--module=`, `--socket=`, `--device=`,
+and `--relax=` values
 (including comma-separated multi-segment completion), and registered app names.
 
 ## Roadmap

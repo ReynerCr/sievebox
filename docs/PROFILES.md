@@ -158,6 +158,22 @@ apps:
     setenv: {ANDROID_SDK: $SDK/platform-tools}
 ```
 
+### Runtime grants without a profile entry
+
+For once-in-a-while runs, `--socket=` and `--device=` grant a single capability
+without editing any profile:
+
+```bash
+sievebox --socket=x11 mytool    # host X session for one run
+sievebox --device=kvm emulator  # /dev/kvm only, no android_emul bundle
+```
+
+Each grant becomes a synthetic module (`__socket_x11`, `__device_kvm`) that
+flows through the same composition, validation, and incompatibility rules as
+profile modules, and shows up under that name in `--status`. The `__` name
+prefix is reserved for these entries and rejected in profiles. When a grant
+would repeat over many runs, give it a real module instead.
+
 ### Host policy knobs
 
 Per-app in the YAML:

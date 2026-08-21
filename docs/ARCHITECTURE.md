@@ -49,10 +49,13 @@ Returns a `Composition` with the args plus metadata (effective modules,
 color, network, home violation). This is the bridge between the config model
 and the actual bwrap invocation.
 
-**`cli.py`**: Parses command-line flags (`--relax`, `--module`, `--dry-run`,
-`--discover`, `--list`, `--status`), loads config, and dispatches to the
-appropriate mode. Handles the `--relax=bwrap`/`--raw` fast path (direct exec,
-no sandbox). Builds the final bwrap invocation and either prints it
+**`cli.py`**: Parses command-line flags (`--relax`, `--module`, `--socket`,
+`--device`, `--dry-run`, `--discover`, `--list`, `--status`), loads config,
+and dispatches to the appropriate mode. Runtime grants (`--socket=`,
+`--device=`) are materialized here as synthetic `__`-prefixed modules
+registered into the config, so composition treats them like any other
+module. Handles the `--relax=bwrap`/`--raw` fast path (direct exec, no
+sandbox). Builds the final bwrap invocation and either prints it
 (`--dry-run`), traces it (`--discover`), or execs it.
 
 **`exec_cmd.py`**: Generates the bash script that runs inside the sandbox
@@ -88,14 +91,22 @@ SYS, etc.), and produces a classified summary. Uses
 - **`core:` is first-wins.** The security floor cannot be relaxed from a
   user drop-in. Only the first file that defines `core:` sets it.
 - **Network is a module, not a core toggle.** `--share-net` and cert binds
-  live in the `network` module's `raw_args`. This unifies all capability
-  injection under `--module=`.
+  live in the `network` module's `raw_args`. Network bundles a capability
+  with its supporting filesystem binds, and the module is the unit that
+  bundles both, so it is granted via `--module=network` rather than a
+  dedicated flag.
 - **`raw_args` on modules.** Arbitrary bwrap directives (e.g. `--share-net`,
   `--symlink`) that aren't filesystem binds or sockets. Appended after core
   args in effective module order.
 - **App resolution: exact then glob.** `find_app` checks exact app names
   first, then glob patterns in declaration order. Comma-separated keys expand
   at load time; glob keys match at lookup time.
+- **Runtime grants are synthetic modules.** `--socket=` and `--device=`
+  materialize `__`-prefixed modules (registered into the config before
+  composition) instead of threading separate grant state through compose.
+  Everything downstream (flattening, conflicts, status) sees them as ordinary
+  modules. The `__` name prefix is reserved and rejected in user profiles so
+  synthetic names can never collide.
 
 ## Tests
 
