@@ -48,9 +48,12 @@ _sievebox_complete() {
 
     prefix="${COMP_LINE:0:COMP_POINT}"
 
-    # --relax=<value> and --modules=<value> (comma-separated)
+    # --relax=<value>, --modules=<value>, --socket=<value>, --device=<value>
+    # (comma-separated)
     _sievebox_complete_value "--relax=" "relax" "--modules=" && return
     _sievebox_complete_value "--modules=" "modules" "--relax=" && return
+    _sievebox_complete_value "--socket=" "sockets" "--device=" && return
+    _sievebox_complete_value "--device=" "devices" "--socket=" && return
 
     # Flag names
     if [[ $cur == -* ]]; then

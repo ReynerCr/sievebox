@@ -97,3 +97,18 @@ def test_complete_apps_includes_globs(monkeypatch, tmp_path):
     lines = _call("apps")
     assert "npm" in lines
     assert "node-*" in lines
+
+
+def test_complete_sockets():
+    lines = _call("sockets")
+    assert sorted(lines) == ["pipewire", "pulse", "wayland", "x11"]
+
+
+def test_complete_devices():
+    lines = _call("devices")
+    assert "kvm" in lines and "dri" in lines
+
+
+def test_complete_flags_include_grant_flags():
+    lines = _call("flags")
+    assert "--socket=" in lines and "--device=" in lines

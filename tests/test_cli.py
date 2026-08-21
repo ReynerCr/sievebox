@@ -27,8 +27,13 @@ def _base_yaml() -> dict:
                      "filesystem": {"ro": ["~/.npmrc"], "rw": ["~/.npm"]}},
             "network": {"raw_args": [["--share-net"]]},
             "gui": {"sockets": ["wayland"]},
+            "x11": {"shell_init": "true"},
+            "x11-dangerous": {"sockets": ["x11"]},
         },
-        "apps": {"npm": {"modules": ["node", "network"], "color": "226"}},
+        "apps": {
+            "npm": {"modules": ["node", "network"], "color": "226"},
+            "xapp": {"modules": ["x11"]},
+        },
     }
 
 
@@ -217,3 +222,63 @@ def test_status_bwrap_arg_count_logical(monkeypatch, tmp_path):
     line = [l for l in out.splitlines() if "bwrap arg count:" in l][0]
     count = int(line.split(":")[1].strip())
     assert count > 0
+
+
+# --- --socket= / --device= ---
+
+def test_socket_grant_injects_bind_into_dryrun(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=x11", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--ro-bind-try /tmp/.X11-unix /tmp/.X11-unix" in out
+
+
+def test_socket_grant_comma_separated(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    rc, out, err = _run(["--socket=wayland,pulse", "--dry-run", "npm"],
+                        monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--ro-bind-try /run/user/1000/wayland-0 /run/user/1000/wayland-0" in out
+    assert "--ro-bind-try /run/user/1000/pulse /run/user/1000/pulse" in out
+
+
+def test_device_grant_injects_dev_bind_into_dryrun(monkeypatch, tmp_path):
+    rc, out, err = _run(["--device=kvm", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--dev-bind-try /dev/kvm /dev/kvm" in out
+
+
+def test_socket_grant_shown_in_status(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=x11", "--status", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "__socket_x11" in out
+
+
+def test_socket_grant_conflicts_with_x11_module(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=x11", "--dry-run", "xapp"], monkeypatch, tmp_path)
+    assert rc == 1
+    assert "'__socket_x11' and 'x11' are incompatible" in err
+
+
+def test_unknown_socket_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 1
+    assert "unknown socket 'bogus'" in err
+
+
+def test_unknown_device_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--device=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 1
+    assert "unknown device 'bogus'" in err
+
+
+def test_empty_socket_value_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "--socket= requires at least one socket name" in err
+
+
+def test_empty_device_value_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--device=", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "--device= requires at least one device name" in err

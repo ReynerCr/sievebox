@@ -14,7 +14,7 @@ from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
 from . import fdargs as fdargs_mod
 from .bwrap import arity, category
-from .config import DEFAULT_COLOR, ConfigError, find_app, find_config_files, flatten_modules, load_config
+from .config import DEFAULT_COLOR, Config, ConfigError, Module, find_app, find_config_files, flatten_modules, load_config
 
 if TYPE_CHECKING:
     from .compose import Composition
@@ -38,6 +38,10 @@ Options:
       --relax=<measure>    Relax a security measure (bwrap, all, filesystem,
                           ro-filesystem)
       --modules=<list>    Append modules to the app at runtime (comma-separated)
+      --socket=<list>     Grant host sockets at runtime: wayland, x11, pulse,
+                          pipewire (comma-separated)
+      --device=<list>     Grant devices at runtime: dri, snd, video, input,
+                          tty, console, kvm (comma-separated)
       --raw               Shorthand for --relax=all (no sandbox)
 """
 
@@ -79,6 +83,8 @@ class ParsedArgs:
     prompt: bool = False
     relaxed: set[str] = field(default_factory=set)
     inject_modules: list[str] = field(default_factory=list)
+    grant_sockets: list[str] = field(default_factory=list)
+    grant_devices: list[str] = field(default_factory=list)
     positional: list[str] = field(default_factory=list)
 
 
@@ -120,6 +126,18 @@ def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
                 _err("--modules= requires at least one module name")
                 return None, 2
             args.inject_modules.extend(vals)
+        elif a.startswith("--socket="):
+            vals = [v.strip() for v in a[len("--socket="):].split(",")]
+            if not any(vals):
+                _err("--socket= requires at least one socket name")
+                return None, 2
+            args.grant_sockets.extend(vals)
+        elif a.startswith("--device="):
+            vals = [v.strip() for v in a[len("--device="):].split(",")]
+            if not any(vals):
+                _err("--device= requires at least one device name")
+                return None, 2
+            args.grant_devices.extend(vals)
         elif a == "--":
             args.positional = argv[i + 1:]
             break
@@ -137,7 +155,8 @@ def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
 # Flag set for bash completion (includes all completable forms).
 _COMPLETE_FLAGS = [
     "--help", "--list", "--status", "--dry-run", "--discover",
-    "--prompt", "--verbose", "--relax=", "--modules=", "--raw",
+    "--prompt", "--verbose", "--relax=", "--modules=", "--socket=",
+    "--device=", "--raw",
     "-h", "-l", "-p", "-v",
 ]
 
@@ -168,6 +187,16 @@ def _handle_complete(args: list[str]) -> int:
             print(name)
         return 0
 
+    if context == "sockets":
+        for name in sorted(capabilities.KNOWN_SOCKETS):
+            print(name)
+        return 0
+
+    if context == "devices":
+        for name in sorted(capabilities.KNOWN_DEVICES):
+            print(name)
+        return 0
+
     if context == "apps":
         for name in sorted(cfg.apps):
             print(name)
@@ -176,6 +205,27 @@ def _handle_complete(args: list[str]) -> int:
         return 0
 
     return 0
+
+
+def _register_runtime_grants(cfg: Config, sockets: list[str],
+                             devices: list[str]) -> list[str]:
+    """Register runtime grants as synthetic modules, return their names.
+
+    A grant is a module like any other: it flows through composition,
+    validation, and status unchanged. The '__' name prefix is reserved for
+    these entries and rejected in user profiles.
+    """
+    names: list[str] = []
+    for sock in sockets:
+        name = f"__socket_{sock}"
+        cfg.modules[name] = Module(name=name, sockets=[sock],
+                                   incompatible=list(capabilities.SOCKET_CONFLICTS.get(sock, [])))
+        names.append(name)
+    for dev in devices:
+        name = f"__device_{dev}"
+        cfg.modules[name] = Module(name=name, devices=[dev])
+        names.append(name)
+    return names
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -223,10 +273,27 @@ def main(argv: list[str] | None = None) -> int:
             _err(f"unknown module '{mod}' in --modules= (run 'sievebox --list' for available modules)")
             return 1
 
+    for sock in args.grant_sockets:
+        if sock not in capabilities.KNOWN_SOCKETS:
+            _err(f"unknown socket '{sock}' in --socket= (valid: {', '.join(sorted(capabilities.KNOWN_SOCKETS))})")
+            return 1
+    for dev in args.grant_devices:
+        if dev not in capabilities.KNOWN_DEVICES:
+            _err(f"unknown device '{dev}' in --device= (valid: {', '.join(sorted(capabilities.KNOWN_DEVICES))})")
+            return 1
+
+    args.inject_modules += _register_runtime_grants(
+        cfg, args.grant_sockets, args.grant_devices)
+
     here = os.path.realpath(os.getcwd())
     home = os.environ.get("HOME") or os.path.expanduser("~")
-    comp = compose_mod.compose(cfg, target, here=here, home=home,
-                               relaxed=args.relaxed, inject_modules=args.inject_modules)
+    try:
+        comp = compose_mod.compose(cfg, target, here=here, home=home,
+                                   relaxed=args.relaxed,
+                                   inject_modules=args.inject_modules)
+    except ConfigError as e:
+        _err(str(e))
+        return 1
 
     if args.mode == "status":
         return _handle_status(cfg, target, comp, args.relaxed)
