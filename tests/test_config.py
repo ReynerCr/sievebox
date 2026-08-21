@@ -968,3 +968,14 @@ def test_compose_env_key_accepted(tmp_path):
     # bare setenv name falls back to compose_env when host value is unset
     comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
     assert _setenv_value(comp.bwrap_args, "FOO") == "bar"
+
+
+# --- reserved __ module namespace ---
+
+def test_double_underscore_module_name_rejected(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"__socket_x11": {"sockets": ["x11"]}},
+        "apps": {"app": {"modules": ["__socket_x11"]}},
+    })
+    with pytest.raises(ConfigError, match="reserved for runtime grants"):
+        load_config([base])

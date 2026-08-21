@@ -4,7 +4,7 @@
 # completion.  Called from _sievebox_complete below.
 #   $1  flag prefix e.g. --relax=
 #   $2  sievebox __complete subcommand e.g. "relax"
-#   $3  the other flag prefix e.g. --modules= (prevents overlap)
+#   $3  the other flag prefix e.g. --module= (prevents overlap)
 _sievebox_complete_value() {
     local flag="$1" cmd="$2" other="$3"
     if [[ $prefix != *"$flag"* ]]; then
@@ -48,9 +48,12 @@ _sievebox_complete() {
 
     prefix="${COMP_LINE:0:COMP_POINT}"
 
-    # --relax=<value> and --modules=<value> (comma-separated)
-    _sievebox_complete_value "--relax=" "relax" "--modules=" && return
-    _sievebox_complete_value "--modules=" "modules" "--relax=" && return
+    # --relax=<value>, --module=<value>, --socket=<value>, --device=<value>
+    # (comma-separated)
+    _sievebox_complete_value "--relax=" "relax" "--module=" && return
+    _sievebox_complete_value "--module=" "modules" "--relax=" && return
+    _sievebox_complete_value "--socket=" "sockets" "--device=" && return
+    _sievebox_complete_value "--device=" "devices" "--socket=" && return
 
     # Flag names
     if [[ $cur == -* ]]; then

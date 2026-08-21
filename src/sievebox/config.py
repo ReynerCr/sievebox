@@ -485,6 +485,9 @@ def _validate_app(a: App, label: str, cfg: Config, errs: list[str]) -> None:
 def _validate(cfg: Config) -> None:
     errs: list[str] = []
     for m in cfg.modules.values():
+        if m.name.startswith("__"):
+            errs.append(f"module names starting with '__' are reserved for "
+                        f"runtime grants: '{m.name}'")
         for base in m.extends:
             if base not in cfg.modules:
                 errs.append(f"module '{m.name}' extends unknown module '{base}'")

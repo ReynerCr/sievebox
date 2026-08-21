@@ -27,8 +27,13 @@ def _base_yaml() -> dict:
                      "filesystem": {"ro": ["~/.npmrc"], "rw": ["~/.npm"]}},
             "network": {"raw_args": [["--share-net"]]},
             "gui": {"sockets": ["wayland"]},
+            "x11": {"shell_init": "true"},
+            "x11-dangerous": {"sockets": ["x11"]},
         },
-        "apps": {"npm": {"modules": ["node", "network"], "color": "226"}},
+        "apps": {
+            "npm": {"modules": ["node", "network"], "color": "226"},
+            "xapp": {"modules": ["x11"]},
+        },
     }
 
 
@@ -128,35 +133,35 @@ def test_relax_filesystem_and_ro_filesystem_mutually_exclusive(monkeypatch, tmp_
     assert "mutually exclusive" in err
 
 
-# --- --modules= ---
+# --- --module= ---
 
 def test_modules_injects_module_into_dryrun(monkeypatch, tmp_path):
-    rc, out, err = _run(["--modules=network", "--dry-run", "npm"], monkeypatch, tmp_path)
+    rc, out, err = _run(["--module=network", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     assert "--share-net" in out
 
 
 def test_modules_comma_separated(monkeypatch, tmp_path):
-    rc, out, err = _run(["--modules=network,network", "--dry-run", "npm"], monkeypatch, tmp_path)
+    rc, out, err = _run(["--module=network,network", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     # network already in npm's modules, so no duplicate --share-net
     assert out.count("--share-net") == 1
 
 
 def test_modules_unknown_module_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--modules=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
+    rc, out, err = _run(["--module=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 1
     assert "unknown module 'bogus'" in err
 
 
 def test_modules_empty_value_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--modules=", "--dry-run", "npm"], monkeypatch, tmp_path)
+    rc, out, err = _run(["--module=", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 2
     assert "requires at least one module name" in err
 
 
 def test_modules_shown_in_status(monkeypatch, tmp_path):
-    rc, out, err = _run(["--status", "--modules=network", "npm"], monkeypatch, tmp_path)
+    rc, out, err = _run(["--status", "--module=network", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     # npm already has network, so effective modules should still list it
     assert "network" in out
@@ -164,7 +169,7 @@ def test_modules_shown_in_status(monkeypatch, tmp_path):
 
 def test_modules_adds_capability_not_in_profile(monkeypatch, tmp_path):
     # npm doesn't have gui by default; inject it
-    rc, out, err = _run(["--modules=gui", "--dry-run", "npm"], monkeypatch, tmp_path)
+    rc, out, err = _run(["--module=gui", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     # gui provides wayland socket bind
     assert "wayland" in out.lower() or "XDG_RUNTIME_DIR" in out
@@ -217,3 +222,63 @@ def test_status_bwrap_arg_count_logical(monkeypatch, tmp_path):
     line = [l for l in out.splitlines() if "bwrap arg count:" in l][0]
     count = int(line.split(":")[1].strip())
     assert count > 0
+
+
+# --- --socket= / --device= ---
+
+def test_socket_grant_injects_bind_into_dryrun(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=x11", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--ro-bind-try /tmp/.X11-unix /tmp/.X11-unix" in out
+
+
+def test_socket_grant_comma_separated(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    rc, out, err = _run(["--socket=wayland,pulse", "--dry-run", "npm"],
+                        monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--ro-bind-try /run/user/1000/wayland-0 /run/user/1000/wayland-0" in out
+    assert "--ro-bind-try /run/user/1000/pulse /run/user/1000/pulse" in out
+
+
+def test_device_grant_injects_dev_bind_into_dryrun(monkeypatch, tmp_path):
+    rc, out, err = _run(["--device=kvm", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "--dev-bind-try /dev/kvm /dev/kvm" in out
+
+
+def test_socket_grant_shown_in_status(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=x11", "--status", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    assert "__socket_x11" in out
+
+
+def test_socket_grant_conflicts_with_x11_module(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=x11", "--dry-run", "xapp"], monkeypatch, tmp_path)
+    assert rc == 1
+    assert "'__socket_x11' and 'x11' are incompatible" in err
+
+
+def test_unknown_socket_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 1
+    assert "unknown socket 'bogus'" in err
+
+
+def test_unknown_device_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--device=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 1
+    assert "unknown device 'bogus'" in err
+
+
+def test_empty_socket_value_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--socket=", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "--socket= requires at least one socket name" in err
+
+
+def test_empty_device_value_errors(monkeypatch, tmp_path):
+    rc, out, err = _run(["--device=", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "--device= requires at least one device name" in err
