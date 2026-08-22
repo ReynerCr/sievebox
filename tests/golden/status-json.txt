@@ -1,0 +1,66 @@
+{
+  "app": "mytool",
+  "grants": {
+    "by_module": {
+      "__socket_x11": {
+        "ro": [
+          "/tmp/.X11-unix",
+          "/home/user/.Xauthority",
+          "/home/user/.Xauthority"
+        ]
+      },
+      "base_mod": {
+        "ro": [
+          "/opt/data"
+        ],
+        "rw": [
+          "/var/cache/tool"
+        ]
+      }
+    },
+    "dev": [],
+    "ro": [
+      "/home/user/.Xauthority",
+      "/opt/data",
+      "/tmp/.X11-unix"
+    ],
+    "rw": [
+      "/var/cache/tool"
+    ],
+    "setenv": [
+      "HOME",
+      "PATH",
+      "USER",
+      "LOGNAME",
+      "TERM",
+      "COLORTERM",
+      "LANG",
+      "LANGUAGE",
+      "LC_ALL",
+      "LC_CTYPE",
+      "XDG_RUNTIME_DIR",
+      "XDG_SESSION_TYPE",
+      "XDG_CURRENT_DESKTOP",
+      "XDG_SESSION_DESKTOP",
+      "FOO",
+      "DISPLAY",
+      "XAUTHORITY"
+    ]
+  },
+  "here": {
+    "mounted": true,
+    "path": "__HERE__"
+  },
+  "modules": {
+    "declared": [
+      "base_mod",
+      "__socket_x11"
+    ],
+    "effective": [
+      "base_mod",
+      "__socket_x11"
+    ]
+  },
+  "network": false,
+  "relaxed": []
+}

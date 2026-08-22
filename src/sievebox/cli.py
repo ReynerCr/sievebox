@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -81,6 +82,7 @@ class ParsedArgs:
     mode: str = "run"
     verbose: bool = False
     prompt: bool = False
+    json: bool = False
     relaxed: set[str] = field(default_factory=set)
     inject_modules: list[str] = field(default_factory=list)
     grant_sockets: list[str] = field(default_factory=list)
@@ -111,6 +113,8 @@ def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
             args.prompt = True
         elif a in ("-v", "--verbose"):
             args.verbose = True
+        elif a == "--json":
+            args.json = True
         elif a == "--raw":
             args.relaxed.add("all")
         elif a.startswith("--relax="):
@@ -156,7 +160,7 @@ def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
 _COMPLETE_FLAGS = [
     "--help", "--list", "--status", "--dry-run", "--discover",
     "--prompt", "--verbose", "--relax=", "--module=", "--socket=",
-    "--device=", "--raw",
+    "--device=", "--raw", "--json",
     "-h", "-l", "-p", "-v",
 ]
 
@@ -296,6 +300,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.mode == "status":
+        if args.json:
+            return _handle_status_json(cfg, target, comp, args.relaxed)
         return _handle_status(cfg, target, comp, args.relaxed)
 
     bwrap_off = "bwrap" in args.relaxed or "all" in args.relaxed
@@ -431,6 +437,15 @@ def _handle_list(cfg: Config, bins: list[str], verbose: bool) -> int:
     return 0
 
 
+def _grants_by_module(cfg: Config, comp: Composition) -> dict[str, dict[str, list[str]]]:
+    """Per-module grant map: module -> {ro, rw, dev} -> bound targets."""
+    out: dict[str, dict[str, list[str]]] = {}
+    for name in comp.effective_modules:
+        g = _grouped(capabilities.module_bwrap_args(cfg.modules[name]))
+        out[name] = {k: v for k, v in g.items() if v}
+    return out
+
+
 def _handle_status(cfg: Config, target: str, comp: Composition, relaxed: set[str] | None = None) -> int:
     relaxed = relaxed or set()
     print(f"Sievebox status for: {target}")
@@ -448,11 +463,38 @@ def _handle_status(cfg: Config, target: str, comp: Composition, relaxed: set[str
     print(f"  bwrap arg count:    {len(comp.bwrap_args)}")
     print()
     print("  Grants by module:")
-    for name in comp.effective_modules:
-        g = _grouped(capabilities.module_bwrap_args(cfg.modules[name]))
-        bits = [f"{k}={len(v)}" for k, v in g.items() if v]
-        detail = "  ".join(f"{k}: {' '.join(v)}" for k, v in g.items() if v)
+    for name, g in _grants_by_module(cfg, comp).items():
+        detail = "  ".join(f"{k}: {' '.join(v)}" for k, v in g.items())
         print(f"    {name:<16} {detail or '(none)'}")
+    return 0
+
+
+def _handle_status_json(cfg: Config, target: str, comp: Composition,
+                        relaxed: set[str] | None = None) -> int:
+    grants = _grants_by_module(cfg, comp)
+    payload = {
+        "app": target,
+        "modules": {
+            "declared": comp.declared_modules,
+            "effective": comp.effective_modules,
+        },
+        "network": comp.network,
+        "relaxed": sorted(relaxed or set()),
+        "here": {
+            "path": comp.here,
+            "mounted": comp.here_mounted,
+        },
+        "grants": {
+            "by_module": grants,
+            "rw": sorted({p for g in grants.values() for p in g.get("rw", [])}),
+            "ro": sorted({p for g in grants.values() for p in g.get("ro", [])}),
+            "dev": sorted({p for g in grants.values() for p in g.get("dev", [])}),
+            "setenv": list(cfg.core.setenv)
+                       + [a for m in comp.effective_modules
+                          for a in capabilities.module_setenv(cfg.modules[m])],
+        },
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
