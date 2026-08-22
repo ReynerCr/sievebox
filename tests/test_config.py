@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -1110,3 +1111,62 @@ def test_introspection_vars_include_synthetic_modules(tmp_path):
     comp = compose(cfg, "app", here="/tmp", home="/home/user", env={},
                    inject_modules=["base"])
     assert _introspection_value(comp.bwrap_args, "SIEVEBOX_MODULES") == "base"
+
+
+# --- compose warnings ---
+
+def _compose_gui(tmp_path, env):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"gui": {"sockets": ["wayland"]}},
+        "apps": {"app": {"modules": ["gui"]}},
+    })
+    cfg = load_config([base])
+    return compose(cfg, "app", here="/tmp", home="/home/user", env=env)
+
+
+def test_warning_wayland_not_granted_with_host_x_available(tmp_path):
+    # no WAYLAND_DISPLAY but an X session exists -> actionable warning
+    comp = _compose_gui(tmp_path, {"DISPLAY": ":0"})
+    assert len(comp.warnings) == 1
+    assert "Wayland session not granted" in comp.warnings[0]
+    assert "--socket=x11" in comp.warnings[0]
+
+
+def test_no_warning_when_wayland_granted(tmp_path):
+    comp = _compose_gui(tmp_path, {
+        "XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"})
+    assert comp.warnings == []
+
+
+def test_no_warning_headless_no_x(tmp_path, monkeypatch):
+    # bare environment: expected failure, warning would be noise.
+    # Neutralize the host's /tmp/.X11-unix (present on Xwayland hosts).
+    real_exists = os.path.exists
+    monkeypatch.setattr(
+        "sievebox.compose.os.path.exists",
+        lambda p: False if p == "/tmp/.X11-unix" else real_exists(p),
+    )
+    comp = _compose_gui(tmp_path, {})
+    assert comp.warnings == []
+
+
+def test_warning_when_only_x11_socket_dir_exists(tmp_path, monkeypatch):
+    # DISPLAY unset but /tmp/.X11-unix present is still an X-capable host
+    real_exists = os.path.exists
+    monkeypatch.setattr(
+        "sievebox.compose.os.path.exists",
+        lambda p: True if p == "/tmp/.X11-unix" else real_exists(p),
+    )
+    comp = _compose_gui(tmp_path, {})
+    assert len(comp.warnings) == 1
+
+
+def test_no_warning_without_wayland_module(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"app": {"modules": ["m"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user",
+                   env={"DISPLAY": ":0"})
+    assert comp.warnings == []

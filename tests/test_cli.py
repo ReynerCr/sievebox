@@ -339,3 +339,22 @@ def test_status_json_validates_structure(monkeypatch, tmp_path):
     assert "/dev/kvm" in d["grants"]["by_module"]["__device_kvm"]["dev"]
     assert d["grants"]["by_module"]["kvm_user"]["dev"] == ["/dev/kvm"]
     assert "PATH" in d["grants"]["setenv"]
+
+
+def test_warning_emitted_on_stderr_before_dryrun(monkeypatch, tmp_path):
+    cfg = _write(tmp_path / "sievebox-profiles.yaml", {
+        "modules": {"gui": {"sockets": ["wayland"]}},
+        "apps": {"gapp": {"modules": ["gui"]}},
+    })
+    monkeypatch.setenv("SIEVEBOX_CONFIG", str(cfg))
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    rc = main(["--dry-run", "gapp"])
+    assert rc == 0
+    assert "[sievebox] Wayland session not granted" in err.getvalue()
+    assert "--socket=x11" in err.getvalue()

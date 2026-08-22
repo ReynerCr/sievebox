@@ -68,5 +68,6 @@
   "relaxed": [],
   "sockets": [
     "x11"
-  ]
+  ],
+  "warnings": []
 }

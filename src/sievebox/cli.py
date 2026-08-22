@@ -324,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if not shutil.which(target):
         print(f"Warning: '{target}' not found on PATH; execution may fail.", file=sys.stderr)
+    _emit_warnings(comp)
     if args.mode in ("run", "discover") and not bwrap_off and not shutil.which("bwrap"):
         _err("bubblewrap ('bwrap') not found on PATH; install it to run sandboxes.")
         return 1
@@ -361,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.prompt:
         _prompt_create(comp.bwrap_args)
+    _emit_warnings(comp)
     _banner(comp, target)
     fd = fdargs_mod.write_args_fd(comp.bwrap_args + remount)
     os.execvp("bwrap", ["bwrap", "--args", str(fd), "bash", "-c", script, target, *args.positional])
@@ -459,6 +461,7 @@ def _status_payload(cfg: Config, target: str, comp: Composition,
         "network": comp.network,
         "sockets": comp.sockets,
         "devices": comp.devices,
+        "warnings": comp.warnings,
         "relaxed": sorted(relaxed or set()),
         "here": {
             "path": comp.here,
@@ -488,6 +491,8 @@ def _handle_status(cfg: Config, target: str, comp: Composition, relaxed: set[str
     print(f"  Network access:     {'enabled' if d['network'] else 'disabled'}")
     print(f"  Sockets granted:    {' '.join(d['sockets']) or '(none)'}")
     print(f"  Devices granted:    {' '.join(d['devices']) or '(none)'}")
+    for w in d["warnings"]:
+        print(f"  Warning:            {w}")
     state = "mounted" if d['here']['mounted'] else "not mounted"
     print(f"  Workspace ($HERE):  {state} ({d['here']['path']})")
     if d['relaxed']:
@@ -523,6 +528,12 @@ def _prompt_create(bwrap_args: list[str]) -> None:
                     except OSError as e:
                         print(f"  failed to create: {src} ({e})", file=sys.stderr)
         i += n
+
+
+def _emit_warnings(comp: Composition) -> None:
+    """Operational warnings before the banner (stderr keeps stdout clean)."""
+    for w in comp.warnings:
+        print(f"[sievebox] {w}", file=sys.stderr)
 
 
 def _banner(comp: Composition, target: str) -> None:
