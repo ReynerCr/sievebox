@@ -1,6 +1,6 @@
 {
   "app": "mytool",
-  "bwrap_arg_count": 193,
+  "bwrap_arg_count": 190,
   "color": "39",
   "devices": [],
   "grants": {
@@ -8,7 +8,6 @@
       "__socket_x11": {
         "ro": [
           "/tmp/.X11-unix",
-          "/home/user/.Xauthority",
           "/home/user/.Xauthority"
         ]
       },

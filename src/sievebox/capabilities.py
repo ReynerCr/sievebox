@@ -103,18 +103,29 @@ def module_bwrap_args(module: Module, env: Mapping[str, str] | None = None) -> l
 
     `env` selects the environment socket binds resolve against (default:
     host env). Filesystem and device binds always use the host env.
+    Identical binds within one module are emitted once; overlaps across
+    modules stay as declared.
     """
     args: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def bind(flag: str, src: str, dst: str) -> None:
+        if (flag, src, dst) not in seen:
+            seen.add((flag, src, dst))
+            args.extend([flag, src, dst])
+
     for p in module.fs_ro:
-        args += _bind("ro", p)
+        if b := _bind("ro", p):
+            bind(*b)
     for p in module.fs_rw:
-        args += _bind("rw", p)
+        if b := _bind("rw", p):
+            bind(*b)
     for dev in module.devices:
         node = f"/dev/{dev}"
-        args += ["--dev-bind-try", node, node]
+        bind("--dev-bind-try", node, node)
     for sock in module.sockets:
         for mode, path in socket_binds(sock, env):
-            args += [_BIND_FLAG[mode], path, path]
+            bind(_BIND_FLAG[mode], path, path)
     return args
 
 
