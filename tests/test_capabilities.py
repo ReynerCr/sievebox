@@ -36,6 +36,28 @@ def test_module_holdings_derive_from_sockets_and_explicit():
     ) == [("exclusive", "foo-data"), ("shared", "bar-data")]
 
 
+# --- bind dedup ---
+
+def test_binds_dedup_within_a_module():
+    from sievebox.config import Module
+
+    env = {"HOME": "/home/u", "XAUTHORITY": "/home/u/.Xauthority",
+           "XDG_RUNTIME_DIR": "/run/u", "WAYLAND_DISPLAY": "wayland-0"}
+    # the x11 socket templates and the explicit filesystem entry coincide
+    mod = Module(name="m", sockets=["x11"], fs_ro=["~/.Xauthority"])
+    args = capabilities.module_bwrap_args(mod, env)
+    assert args.count("/home/u/.Xauthority") == 2  # one bind = flag+src+dst
+
+
+def test_binds_different_modes_not_deduped():
+    from sievebox.config import Module
+
+    mod = Module(name="m", fs_ro=["/data"], fs_rw=["/data"])
+    args = capabilities.module_bwrap_args(mod)
+    assert args == ["--ro-bind-try", "/data", "/data",
+                    "--bind-try", "/data", "/data"]
+
+
 def test_module_holdings_strongest_mode_wins_per_key():
     from sievebox.config import Module
 
