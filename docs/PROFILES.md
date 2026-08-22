@@ -76,6 +76,12 @@ modules:
 - `shell_init`: an optional shell snippet fused into the sandbox launch (used
   e.g. by the Conda module to auto-activate an env). The app's color is
   available as `$SIEVEBOX_COLOR` (a 256-color code) for use in `tput` or ANSI escapes.
+  The sandbox's own composition facts are also set: `SIEVEBOX_MODULES`,
+  `SIEVEBOX_SOCKETS`, and `SIEVEBOX_DEVICES` (space-separated lists of
+  effective modules and granted sockets/devices). A socket or device only
+  appears there if the host actually provided it. Prefer checking these over
+  sniffing session vars like `WAYLAND_DISPLAY` (the `x11` module's shell_init
+  is the reference example).
 - `raw_args`: raw bwrap directives (token lists) appended after core args in
   module order. `{bin}` expands to the target binary, `~` to `$HOME`. Used by
   the `network` module for `--share-net` and cert binds.
