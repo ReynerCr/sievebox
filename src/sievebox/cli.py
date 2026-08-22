@@ -362,7 +362,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.prompt:
         _prompt_create(comp.bwrap_args)
-    _emit_warnings(comp)
     _banner(comp, target)
     fd = fdargs_mod.write_args_fd(comp.bwrap_args + remount)
     os.execvp("bwrap", ["bwrap", "--args", str(fd), "bash", "-c", script, target, *args.positional])
