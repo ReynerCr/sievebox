@@ -204,4 +204,6 @@ Display support is Wayland-first (the `gui` module). X11-only apps use the
 xwayland-satellite when available and rootful Xwayland otherwise, so the host
 X session is never exposed. `x11-rootful` forces the rootful server;
 `x11-dangerous` is the weak opt-in host passthrough, mutually exclusive with
-the other two.
+the other two. When a Wayland-only session can't grant a module its socket but
+an X server is present on the host, sievebox warns and points at
+`--socket=x11` as the explicit escape hatch.
