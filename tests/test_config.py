@@ -1044,3 +1044,69 @@ def test_network_absent_without_share_net(tmp_path):
     cfg = load_config([base])
     comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
     assert comp.network is False
+
+
+# --- sandbox introspection vars ---
+
+def _introspection_value(bwrap_args: list[str], name: str) -> str | None:
+    for i in range(len(bwrap_args) - 1):
+        if bwrap_args[i] == "--setenv" and bwrap_args[i + 1] == name:
+            return bwrap_args[i + 2]
+    return None
+
+
+def test_introspection_vars_emitted(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "gui": {"sockets": ["wayland"]},
+            "gpu": {"devices": ["dri"]},
+        },
+        "apps": {"app": {"modules": ["gui", "gpu"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user",
+                   env={"XDG_RUNTIME_DIR": "/run/user/1000",
+                        "WAYLAND_DISPLAY": "wayland-0"})
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_MODULES") == "gui gpu"
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_SOCKETS") == "wayland"
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_DEVICES") == "dri"
+
+
+def test_introspection_vars_post_gating(tmp_path):
+    # bare env: wayland socket gated out. Device gating depends on the host,
+    # so compare against the same existence check compose uses.
+    import os
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"sockets": ["wayland"], "devices": ["kvm"]}},
+        "apps": {"app": {"modules": ["m"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_MODULES") == "m"
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_SOCKETS") == ""
+    expected = "kvm" if os.path.exists("/dev/kvm") else ""
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_DEVICES") == expected
+
+
+def test_introspection_vars_empty_when_nothing_granted(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"plain": {}},
+        "apps": {"app": {"modules": ["plain"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_MODULES") == "plain"
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_SOCKETS") == ""
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_DEVICES") == ""
+
+
+def test_introspection_vars_include_synthetic_modules(tmp_path):
+    # compose-level: injected module names flow into SIEVEBOX_MODULES
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"base": {}},
+        "apps": {"app": {"modules": ["base"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={},
+                   inject_modules=["base"])
+    assert _introspection_value(comp.bwrap_args, "SIEVEBOX_MODULES") == "base"

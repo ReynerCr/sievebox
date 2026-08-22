@@ -112,6 +112,8 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         "--share-net" in d
         for mod in eff_mods for d in mod.raw_args
     )
+    sockets_granted = capabilities.granted_sockets(eff_mods, env)
+    devices_granted = capabilities.granted_devices(eff_mods)
 
     for name, value in setenv_entries.items():
         if value is None:
@@ -121,8 +123,13 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         if val:
             args += ["--setenv", name, val]
 
+    # Composition facts for in-sandbox scripts, next to SIEVEBOX_COLOR.
+    # Space-separated so `for s in $SIEVEBOX_SOCKETS` works in bash.
     color = app.color or DEFAULT_COLOR
     args += ["--setenv", "SIEVEBOX_COLOR", color]
+    args += ["--setenv", "SIEVEBOX_MODULES", " ".join(eff)]
+    args += ["--setenv", "SIEVEBOX_SOCKETS", " ".join(sockets_granted)]
+    args += ["--setenv", "SIEVEBOX_DEVICES", " ".join(devices_granted)]
 
     here_mounted = (here != home) and not app.allow_home
     if here_mounted:
@@ -138,6 +145,6 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         here_mounted=here_mounted,
         home_violation=(here == home) and not app.allow_home,
         shell_inits=shell_inits,
-        sockets=capabilities.granted_sockets(eff_mods, env),
-        devices=capabilities.granted_devices(eff_mods),
+        sockets=sockets_granted,
+        devices=devices_granted,
     )
