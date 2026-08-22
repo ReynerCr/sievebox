@@ -25,6 +25,8 @@ _MODULE_SCHEMA = {
     "setenv":       {"merge": "env",    "type": dict, "value_type": (str, type(None))},
     "shell_init":   {"merge": "scalar", "type": (str, list), "item_type": str},
     "incompatible": {"merge": "list",   "type": list, "item_type": str},
+    "claims":       {"merge": "list",   "type": list, "item_type": str},
+    "shares":       {"merge": "list",   "type": list, "item_type": str},
     "filesystem":   {"merge": "filesystem", "type": dict},
     "sockets":      {"merge": "list",   "type": list},
     "devices":      {"merge": "list",   "type": list},
@@ -53,6 +55,8 @@ class Module:
     setenv: dict[str, str | None] = field(default_factory=dict)
     shell_init: str = ""
     incompatible: list[str] = field(default_factory=list)
+    claims: list[str] = field(default_factory=list)
+    shares: list[str] = field(default_factory=list)
     fs_ro: list[str] = field(default_factory=list)
     fs_rw: list[str] = field(default_factory=list)
     sockets: list[str] = field(default_factory=list)
@@ -457,6 +461,8 @@ def load_config(paths: list[Path]) -> Config:
             setenv=spec.get("setenv") or {},
             shell_init=shell_init,
             incompatible=_as_list(spec.get("incompatible")),
+            claims=_as_list(spec.get("claims")),
+            shares=_as_list(spec.get("shares")),
             fs_ro=_as_list(fs.get("ro")),
             fs_rw=_as_list(fs.get("rw")),
             sockets=_as_list(spec.get("sockets")),

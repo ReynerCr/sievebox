@@ -222,8 +222,7 @@ def _register_runtime_grants(cfg: Config, sockets: list[str],
     names: list[str] = []
     for sock in sockets:
         name = f"__socket_{sock}"
-        cfg.modules[name] = Module(name=name, sockets=[sock],
-                                   incompatible=list(capabilities.SOCKET_CONFLICTS.get(sock, [])))
+        cfg.modules[name] = Module(name=name, sockets=[sock])
         names.append(name)
     for dev in devices:
         name = f"__device_{dev}"

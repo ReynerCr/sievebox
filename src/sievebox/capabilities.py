@@ -34,10 +34,10 @@ _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
     "pipewire": [("ro", "$XDG_RUNTIME_DIR/pipewire-0")],
 }
 
-# socket name -> module names it cannot coexist with. Sockets absent from
-# this map have no module conflicts.
-SOCKET_CONFLICTS: dict[str, list[str]] = {
-    "x11": ["x11", "x11-rootful"],
+# socket name -> (mode, key) holdings implied by naming the socket.
+# Sockets absent from this map imply nothing.
+SOCKET_IMPLIES: dict[str, list[tuple[str, str]]] = {
+    "x11": [("shared", "x11-display")],
 }
 
 # Known socket names (derived from _SOCKET_BINDS keys).
@@ -116,6 +116,34 @@ def module_bwrap_args(module: Module, env: Mapping[str, str] | None = None) -> l
         for mode, path in socket_binds(sock, env):
             args += [_BIND_FLAG[mode], path, path]
     return args
+
+
+def module_holdings(module: Module) -> list[tuple[str, str]]:
+    """(mode, key) holdings a module carries over capability keys, deduped
+    in order: implied by its sockets first, then explicit `claims`
+    (exclusive), then explicit `shares` (shared). A module can hold one
+    mode per key; the stronger wins."""
+    out: list[tuple[str, str]] = []
+
+    def add(mode: str, key: str) -> None:
+        for i, (m, k) in enumerate(out):
+            if k != key:
+                continue
+            if m == "exclusive":
+                return
+            out[i] = (mode, key)  # upgrade shared to exclusive in place
+            return
+        out.append((mode, key))
+
+    for sock in module.sockets:
+        for mode, key in SOCKET_IMPLIES.get(sock, []):
+            add(mode, key)
+            add(mode, key)
+    for key in module.claims:
+        add("exclusive", key)
+    for key in module.shares:
+        add("shared", key)
+    return out
 
 
 def granted_sockets(modules: list[Module], env: Mapping[str, str]) -> list[str]:

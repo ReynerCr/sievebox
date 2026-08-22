@@ -27,7 +27,7 @@ def _base_yaml() -> dict:
                      "filesystem": {"ro": ["~/.npmrc"], "rw": ["~/.npm"]}},
             "network": {"raw_args": [["--share-net"]]},
             "gui": {"sockets": ["wayland"]},
-            "x11": {"shell_init": "true"},
+            "x11": {"shell_init": "true", "claims": ["x11-display"]},
             "x11-dangerous": {"sockets": ["x11"]},
         },
         "apps": {
@@ -257,7 +257,8 @@ def test_socket_grant_shown_in_status(monkeypatch, tmp_path):
 def test_socket_grant_conflicts_with_x11_module(monkeypatch, tmp_path):
     rc, out, err = _run(["--socket=x11", "--dry-run", "xapp"], monkeypatch, tmp_path)
     assert rc == 1
-    assert "'__socket_x11' and 'x11' are incompatible" in err
+    assert "claim 'x11-display'" in err
+    assert "__socket_x11" in err and "'x11'" in err
 
 
 def test_unknown_socket_errors(monkeypatch, tmp_path):

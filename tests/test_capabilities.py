@@ -11,13 +11,45 @@ sys.path.insert(0, str(REPO / "src"))
 from sievebox import capabilities
 
 
-def test_socket_conflicts_reference_known_sockets():
-    assert set(capabilities.SOCKET_CONFLICTS) <= capabilities.KNOWN_SOCKETS
+def test_socket_implies_reference_known_sockets():
+    assert set(capabilities.SOCKET_IMPLIES) <= capabilities.KNOWN_SOCKETS
 
 
-def test_x11_socket_conflicts_with_private_x_modules():
-    # host X session and a private X server would fight over DISPLAY
-    assert set(capabilities.SOCKET_CONFLICTS["x11"]) == {"x11", "x11-rootful"}
+def test_x11_socket_implies_shared_display_holding():
+    # the x11 socket means shared host-X access: consumers stack freely,
+    # providers hold the exclusive form instead
+    assert capabilities.SOCKET_IMPLIES["x11"] == [("shared", "x11-display")]
+
+
+def test_module_holdings_derive_from_sockets_and_explicit():
+    from sievebox.config import Module
+
+    # naming the x11 socket implies its shared holding
+    assert capabilities.module_holdings(Module(name="m", sockets=["x11"])) == [
+        ("shared", "x11-display")]
+    # shareable sockets imply nothing
+    assert capabilities.module_holdings(
+        Module(name="m", sockets=["wayland", "pulse"])) == []
+    # explicit exclusive + explicit shared merge deduped in order
+    assert capabilities.module_holdings(
+        Module(name="m", claims=["foo-data"], shares=["bar-data"]),
+    ) == [("exclusive", "foo-data"), ("shared", "bar-data")]
+
+
+def test_module_holdings_strongest_mode_wins_per_key():
+    from sievebox.config import Module
+
+    # a module never holds both modes of one key; the stronger replaces
+    # the weaker regardless of declaration order or socket implication
+    assert capabilities.module_holdings(
+        Module(name="m", sockets=["x11"], claims=["x11-display"]),
+    ) == [("exclusive", "x11-display")]
+    assert capabilities.module_holdings(
+        Module(name="m", claims=["foo-data"], shares=["foo-data"]),
+    ) == [("exclusive", "foo-data")]
+    assert capabilities.module_holdings(
+        Module(name="m", shares=["foo-data"], claims=["foo-data"]),
+    ) == [("exclusive", "foo-data")]
 
 
 # --- socket resolution ---
