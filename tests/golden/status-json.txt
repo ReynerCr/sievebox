@@ -2,6 +2,7 @@
   "app": "mytool",
   "bwrap_arg_count": 184,
   "color": "39",
+  "devices": [],
   "grants": {
     "by_module": {
       "__socket_x11": {

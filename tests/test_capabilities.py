@@ -42,3 +42,29 @@ def test_x11_socket_partial_resolution():
     binds = capabilities.socket_binds("x11", {"XAUTHORITY": "/home/u/.Xauthority"})
     assert binds == [("ro", "/tmp/.X11-unix"), ("ro", "/home/u/.Xauthority"),
                      ("ro", os.path.expanduser("~/.Xauthority"))]
+
+
+# --- granted aggregates ---
+
+def test_granted_sockets_union_deduped():
+    from sievebox.config import Module
+    env = {"XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"}
+    mods = [Module(name="a", sockets=["wayland"]),
+            Module(name="b", sockets=["wayland", "pulse"])]
+    # pulse socket has no pulse-native gating vars; XDG_RUNTIME_DIR set so it binds
+    assert capabilities.granted_sockets(mods, env) == ["wayland", "pulse"]
+    # wayland gates out entirely without its vars; pulse keeps its ~ cookie path
+    assert capabilities.granted_sockets(mods, {}) == ["pulse"]
+
+
+def test_granted_devices_existence_gate():
+    from sievebox.config import Module
+    # /dev/null exists everywhere; the other name never does
+    mods = [Module(name="a", devices=["null", "nonexistent-dev-xyz"])]
+    assert capabilities.granted_devices(mods) == ["null"]
+
+
+def test_granted_devices_deduped_across_modules():
+    from sievebox.config import Module
+    mods = [Module(name="a", devices=["null"]), Module(name="b", devices=["null"])]
+    assert capabilities.granted_devices(mods) == ["null"]

@@ -111,6 +111,35 @@ def module_bwrap_args(module: Module, env: Mapping[str, str] | None = None) -> l
     return args
 
 
+def granted_sockets(modules: list[Module], env: Mapping[str, str]) -> list[str]:
+    """Sockets granted across modules: union, deduped, env-gated.
+
+    A socket whose bind templates all gate out (unset $VAR) is not granted,
+    even when a module names it.
+    """
+    out: list[str] = []
+    for m in modules:
+        for sock in m.sockets:
+            if sock not in out and socket_binds(sock, env):
+                out.append(sock)
+    return out
+
+
+def granted_devices(modules: list[Module]) -> list[str]:
+    """Devices granted across modules: union, deduped, existence-gated.
+
+    A device whose /dev/<name> node is missing from the host is not granted
+    (bwrap's --dev-bind-try would silently skip it anyway).
+    """
+    out: list[str] = []
+    for m in modules:
+        for dev in m.devices:
+            node = f"/dev/{dev}"
+            if dev not in out and os.path.exists(node):
+                out.append(dev)
+    return out
+
+
 def module_setenv(module: Module) -> dict[str, str | None]:
     """Env entries a module forwards (declared + socket-derived), deduped.
 
