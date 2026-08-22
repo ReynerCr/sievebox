@@ -76,8 +76,27 @@ def _bind(mode: str, path: str) -> list[str]:
     return [] if p is None else [_BIND_FLAG[mode], p, p]
 
 
-def module_bwrap_args(module: Module) -> list[str]:
-    """Flat bwrap args for a module's filesystem, devices, and sockets."""
+def socket_binds(sock: str, env: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
+    """Resolve a socket's bind templates against `env` (default: host env).
+
+    Returns (mode, path) pairs whose $VAR references all resolved; templates
+    gated out by an unset var are skipped. A socket with no surviving binds
+    did not resolve in this environment.
+    """
+    out: list[tuple[str, str]] = []
+    for mode, tmpl in _SOCKET_BINDS.get(sock, []):
+        p = expand_value(tmpl, env)
+        if p is not None:
+            out.append((mode, p))
+    return out
+
+
+def module_bwrap_args(module: Module, env: Mapping[str, str] | None = None) -> list[str]:
+    """Flat bwrap args for a module's filesystem, devices, and sockets.
+
+    `env` selects the environment socket binds resolve against (default:
+    host env). Filesystem and device binds always use the host env.
+    """
     args: list[str] = []
     for p in module.fs_ro:
         args += _bind("ro", p)
@@ -87,9 +106,38 @@ def module_bwrap_args(module: Module) -> list[str]:
         node = f"/dev/{dev}"
         args += ["--dev-bind-try", node, node]
     for sock in module.sockets:
-        for mode, tmpl in _SOCKET_BINDS.get(sock, []):
-            args += _bind(mode, tmpl)
+        for mode, path in socket_binds(sock, env):
+            args += [_BIND_FLAG[mode], path, path]
     return args
+
+
+def granted_sockets(modules: list[Module], env: Mapping[str, str]) -> list[str]:
+    """Sockets granted across modules: union, deduped, env-gated.
+
+    A socket whose bind templates all gate out (unset $VAR) is not granted,
+    even when a module names it.
+    """
+    out: list[str] = []
+    for m in modules:
+        for sock in m.sockets:
+            if sock not in out and socket_binds(sock, env):
+                out.append(sock)
+    return out
+
+
+def granted_devices(modules: list[Module]) -> list[str]:
+    """Devices granted across modules: union, deduped, existence-gated.
+
+    A device whose /dev/<name> node is missing from the host is not granted
+    (bwrap's --dev-bind-try would silently skip it anyway).
+    """
+    out: list[str] = []
+    for m in modules:
+        for dev in m.devices:
+            node = f"/dev/{dev}"
+            if dev not in out and os.path.exists(node):
+                out.append(dev)
+    return out
 
 
 def module_setenv(module: Module) -> dict[str, str | None]:

@@ -42,6 +42,8 @@ class Composition:
     here_mounted: bool
     home_violation: bool          # here == home and not allow_home
     shell_inits: list[str] = field(default_factory=list)
+    sockets: list[str] = field(default_factory=list)  # granted (post-gating)
+    devices: list[str] = field(default_factory=list)  # granted (post-gating)
 
 
 def compose(cfg: Config, app_name: str, *, here: str, home: str,
@@ -95,12 +97,21 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     for name in eff:
         mod = cfg.modules[name]
         if not fs_relaxed:
-            args += capabilities.module_bwrap_args(mod)
+            args += capabilities.module_bwrap_args(mod, env)
         args += _flatten(mod.raw_args, app_name, home)
         if mod.shell_init:
             shell_inits.append(mod.shell_init)
         setenv_entries.update(capabilities.module_setenv(mod))
     setenv_entries.update(app.setenv)
+
+    # Grants observed over the effective modules: sockets gated on env
+    # resolution, devices on /dev node existence. A module naming something
+    # the host cannot provide did not grant it.
+    eff_mods = [cfg.modules[n] for n in eff]
+    network = any(
+        "--share-net" in d
+        for mod in eff_mods for d in mod.raw_args
+    )
 
     for name, value in setenv_entries.items():
         if value is None:
@@ -122,9 +133,11 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         effective_modules=eff,
         declared_modules=declared,
         color=color,
-        network="network" in eff,
+        network=network,
         here=here,
         here_mounted=here_mounted,
         home_violation=(here == home) and not app.allow_home,
         shell_inits=shell_inits,
+        sockets=capabilities.granted_sockets(eff_mods, env),
+        devices=capabilities.granted_devices(eff_mods),
     )

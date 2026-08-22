@@ -524,7 +524,7 @@ def test_raw_args_flat_list_rejected(tmp_path):
         "modules": {"m": {"raw_args": ["--share-net"]}},
         "apps": {"x": {"modules": ["m"]}},
     })
-    with pytest.raises(ConfigError, match="raw_args\[0\].*must be a list"):
+    with pytest.raises(ConfigError, match=r"raw_args\[0\].*must be a list"):
         load_config([tmp_path / "base.yaml"])
 
 
@@ -954,7 +954,7 @@ def test_old_env_key_rejected_with_rename_hint(tmp_path):
         "modules": {"m": {}},
         "apps": {"app": {"modules": ["m"], "env": {"FOO": "bar"}}},
     })
-    with pytest.raises(ConfigError, match="unknown key\(s\): env"):
+    with pytest.raises(ConfigError, match=r"unknown key\(s\): env"):
         load_config([base])
 
 
@@ -979,3 +979,68 @@ def test_double_underscore_module_name_rejected(tmp_path):
     })
     with pytest.raises(ConfigError, match="reserved for runtime grants"):
         load_config([base])
+
+
+# --- granted (post-gating) sockets in compose ---
+
+def _compose_sockets(tmp_path, env, sockets=("wayland",)):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"sockets": list(sockets)}},
+        "apps": {"app": {"modules": ["m"]}},
+    })
+    cfg = load_config([base])
+    return compose(cfg, "app", here="/tmp", home="/home/user", env=env)
+
+
+def test_granted_sockets_wayland_session(tmp_path):
+    comp = _compose_sockets(tmp_path, {
+        "XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"})
+    assert comp.sockets == ["wayland"]
+
+
+def test_granted_sockets_bare_env(tmp_path):
+    comp = _compose_sockets(tmp_path, {})
+    assert comp.sockets == []
+
+
+def test_granted_sockets_x11_partial(tmp_path):
+    # x11 always resolves /tmp/.X11-unix, so it counts as granted
+    comp = _compose_sockets(tmp_path, {}, sockets=("x11",))
+    assert comp.sockets == ["x11"]
+
+
+def test_granted_sockets_deduped_across_modules(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"sockets": ["wayland"]},
+            "b": {"sockets": ["wayland"]},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user",
+                   env={"XDG_RUNTIME_DIR": "/run/user/1000",
+                        "WAYLAND_DISPLAY": "wayland-0"})
+    assert comp.sockets == ["wayland"]
+
+
+# --- capability-aware network detection ---
+
+def test_network_detected_via_share_net_regardless_of_module_name(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"inet": {"raw_args": [["--share-net"]]}},
+        "apps": {"app": {"modules": ["inet"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
+    assert comp.network is True
+
+
+def test_network_absent_without_share_net(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"plain": {}},
+        "apps": {"app": {"modules": ["plain"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
+    assert comp.network is False

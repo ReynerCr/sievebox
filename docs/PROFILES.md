@@ -59,8 +59,13 @@ modules:
 - `sockets`: named host sockets (`wayland`, `x11`, `pulse`, `pipewire`). The
   `x11` socket binds the host X session (used only by `x11-dangerous`, weak by
   design). For X11 apps, prefer the `x11` / `x11-rootful` modules, which run a
-  private X server inside the sandbox.
-- `devices`: device names under `/dev` (e.g. `dri`, `kvm`).
+  private X server inside the sandbox. A socket needs its session vars set to
+  be granted (`wayland` needs `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`): on a
+  session without them the bind is skipped, and `--status` reports it under
+  `Sockets granted`.
+- `devices`: device names under `/dev` (e.g. `dri`, `kvm`). A device whose
+  node is missing on the host is not granted for that run (`--status` reports
+  granted devices).
 - `extends`: list of base modules to inherit binds from (pulled in first, deduped,
   cycle-protected).
 - `incompatible`: list of modules that cannot be active together; composition
