@@ -94,6 +94,17 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
                     f"modules '{name}' and '{other}' are incompatible and "
                     f"cannot be active together (effective: {' '.join(eff)})"
                 )
+    holders: dict[str, list[tuple[str, str]]] = {}
+    for name in eff:
+        for mode, key in capabilities.module_holdings(cfg.modules[name]):
+            holders.setdefault(key, []).append((name, mode))
+    for key, entries in holders.items():
+        if len(entries) > 1 and any(mode == "exclusive" for _, mode in entries):
+            names = ", ".join(f"'{n}'" for n, _ in entries)
+            raise ConfigError(
+                f"modules {names} all claim '{key}' and cannot be active "
+                f"together (effective: {' '.join(eff)})"
+            )
     if root_bind:
         # Root bind first, then virtual FS on top. Skip redundant host binds
         # and tmpfs (conflicts with the root bind). Module rw binds overlay

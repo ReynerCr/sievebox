@@ -28,10 +28,14 @@ flag lists. Adding a new bwrap directive only requires extending the table here.
 
 **`capabilities.py`**: The engine's capability registry: socket names
 (`wayland`, `x11`, `pulse`, `pipewire`) mapped to their bwrap bind templates,
-setenv requirements, and the socket-to-module conflict map; known device
-names (`dri`, `snd`, ...); `~` and `$VAR` value expansion with unset-var
-gating. `granted_sockets`/`granted_devices` aggregate a module list into what
-the host actually granted (env-gated sockets, existence-gated devices).
+setenv requirements, and `SOCKET_IMPLIES` (holdings a socket implies for the
+naming module); known device names (`dri`, `snd`, ...); `~` and `$VAR` value
+expansion with unset-var gating. `module_holdings` merges a module's explicit
+`claims`/`shares` with its socket-implied holdings; `compose.py` rejects
+combinations where several effective modules hold one key and any holder is
+exclusive (readers-writer: consumers of a resource stack, providers do not).
+`granted_sockets`/`granted_devices` aggregate a module list into what the
+host actually granted (env-gated sockets, existence-gated devices).
 This is where future capabilities (rlimits, seccomp) would live. `config.py`
 imports the socket and device sets for validation, so adding a socket here
 automatically makes it valid in profiles.

@@ -110,7 +110,7 @@ modules:
           export DISPLAY=:10
         }
       - start_rootful_x11
-    incompatible: [x11, x11-dangerous]
+    claims: [x11-display]
 
   # Preferred private X server: rootless via xwayland-satellite when
   # available, else rootful Xwayland (using x11-rootful shell_init).
@@ -137,7 +137,7 @@ modules:
             fi
             ;;
         esac
-    incompatible: [x11-rootful, x11-dangerous]
+    claims: [x11-display]
 
   # Weak opt-in: host X session passthrough (can read/inject into other X11
   # clients). Mutually exclusive with 'x11' and 'x11-rootful' modules.
@@ -145,7 +145,6 @@ modules:
   # for X11 only sessions.
   x11-dangerous:
     sockets: [x11]
-    incompatible: [x11, x11-rootful]
 
   audio:
     sockets: [pulse, pipewire]

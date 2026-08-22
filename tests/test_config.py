@@ -697,6 +697,94 @@ def test_incompatible_unknown_module_rejected(tmp_path):
         load_config([base])
 
 
+def test_duplicate_claims_raise_at_compose(tmp_path):
+    # claims are opaque strings: the engine needs to know nothing about
+    # 'foo-data' to reject two modules competing for it
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"claims": ["foo-data"]},
+            "b": {"claims": ["foo-data"]},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    with pytest.raises(ConfigError, match="'a', 'b' all claim 'foo-data'"):
+        compose(cfg, "app", here="/tmp", home="/home/user")
+
+
+def test_claims_via_extends_raise_at_compose(tmp_path):
+    # a claiming base module is in the effective set itself, so its
+    # claims travel with it
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "base": {"claims": ["x11-display"]},
+            "other": {"extends": ["base"]},
+            "comp": {"claims": ["x11-display"]},
+        },
+        "apps": {"app": {"modules": ["other", "comp"]}},
+    })
+    cfg = load_config([base])
+    with pytest.raises(ConfigError, match="claim 'x11-display'"):
+        compose(cfg, "app", here="/tmp", home="/home/user")
+
+
+def test_x11_socket_implies_display_claim(tmp_path):
+    # two plain consumers of the host X session stack fine: the socket
+    # implies a shared claim, and shared+shared composes
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"sockets": ["x11"]},
+            "b": {"sockets": ["x11"]},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user")
+    assert comp.effective_modules == ["a", "b"]
+
+
+def test_shared_claim_conflicts_with_exclusive(tmp_path):
+    # a provider (exclusive) rejects any concurrent holder of the resource
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "provider": {"claims": ["x11-display"]},
+            "consumer": {"shares": ["x11-display"]},
+        },
+        "apps": {"app": {"modules": ["provider", "consumer"]}},
+    })
+    cfg = load_config([base])
+    with pytest.raises(ConfigError, match="all claim 'x11-display'"):
+        compose(cfg, "app", here="/tmp", home="/home/user")
+
+
+def test_upgraded_holding_conflicts_normally(tmp_path):
+    # a consumer module that upgrades itself to exclusive (socket + explicit
+    # claim) is one holder, not a module arguing with itself
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"sockets": ["x11"], "claims": ["x11-display"]},
+            "b": {"sockets": ["x11"]},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    with pytest.raises(ConfigError, match=r"'a', 'b' all claim 'x11-display'"):
+        compose(cfg, "app", here="/tmp", home="/home/user")
+
+
+def test_distinct_claims_compose_ok(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"claims": ["foo-data"]},
+            "b": {"claims": ["bar-data"]},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user")
+    assert comp.effective_modules == ["a", "b"]
+
+
 def test_incompatible_not_active_ok(tmp_path):
     base = _write(tmp_path / "base.yaml", {
         "modules": {
