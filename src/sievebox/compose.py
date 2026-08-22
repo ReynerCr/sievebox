@@ -44,6 +44,25 @@ class Composition:
     shell_inits: list[str] = field(default_factory=list)
     sockets: list[str] = field(default_factory=list)  # granted (post-gating)
     devices: list[str] = field(default_factory=list)  # granted (post-gating)
+    warnings: list[str] = field(default_factory=list)
+
+
+def _compose_warnings(eff: list[str], cfg: Config, env: dict,
+                      sockets_granted: list[str]) -> list[str]:
+    """Situations a run will likely fail from, with an actionable hint."""
+    out: list[str] = []
+    wants_wayland = any(
+        "wayland" in cfg.modules[n].sockets for n in eff
+    )
+    if wants_wayland and "wayland" not in sockets_granted \
+            and "x11" not in sockets_granted:
+        x11_available = bool(env.get("DISPLAY")) or os.path.exists("/tmp/.X11-unix")
+        if x11_available:
+            out.append(
+                "Wayland session not granted, no display in sandbox. "
+                "Host X is available via --socket=x11 (weak isolation)."
+            )
+    return out
 
 
 def compose(cfg: Config, app_name: str, *, here: str, home: str,
@@ -114,6 +133,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     )
     sockets_granted = capabilities.granted_sockets(eff_mods, env)
     devices_granted = capabilities.granted_devices(eff_mods)
+    warns = _compose_warnings(eff, cfg, env, sockets_granted)
 
     for name, value in setenv_entries.items():
         if value is None:
@@ -147,4 +167,5 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         shell_inits=shell_inits,
         sockets=sockets_granted,
         devices=devices_granted,
+        warnings=warns,
     )

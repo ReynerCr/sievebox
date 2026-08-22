@@ -169,6 +169,11 @@ modules:
     setenv: [CONDA_ENV]
     shell_init: |
       export CONDA_EXE="/usr/bin/conda"
+      if ! command -v conda >/dev/null; then
+        printf "\033[38;5;${SIEVEBOX_COLOR}m[sievebox]\033[0m Error: conda module active but conda is not in PATH.\n" >&2
+      elif [ ! -f /etc/profile.d/conda.sh ]; then
+        printf "\033[38;5;${SIEVEBOX_COLOR}m[sievebox]\033[0m Warning: /etc/profile.d/conda.sh not found; conda shell integration disabled.\n" >&2
+      fi
       if [ "$0" = "conda" ]; then
         [ -f /etc/profile.d/conda.sh ] && source /etc/profile.d/conda.sh
         if [ "$#" -gt 1 ]; then
