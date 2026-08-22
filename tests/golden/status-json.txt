@@ -64,5 +64,8 @@
     ]
   },
   "network": false,
-  "relaxed": []
+  "relaxed": [],
+  "sockets": [
+    "x11"
+  ]
 }

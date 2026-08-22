@@ -979,3 +979,46 @@ def test_double_underscore_module_name_rejected(tmp_path):
     })
     with pytest.raises(ConfigError, match="reserved for runtime grants"):
         load_config([base])
+
+
+# --- granted (post-gating) sockets in compose ---
+
+def _compose_sockets(tmp_path, env, sockets=("wayland",)):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {"sockets": list(sockets)}},
+        "apps": {"app": {"modules": ["m"]}},
+    })
+    cfg = load_config([base])
+    return compose(cfg, "app", here="/tmp", home="/home/user", env=env)
+
+
+def test_granted_sockets_wayland_session(tmp_path):
+    comp = _compose_sockets(tmp_path, {
+        "XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"})
+    assert comp.sockets == ["wayland"]
+
+
+def test_granted_sockets_bare_env(tmp_path):
+    comp = _compose_sockets(tmp_path, {})
+    assert comp.sockets == []
+
+
+def test_granted_sockets_x11_partial(tmp_path):
+    # x11 always resolves /tmp/.X11-unix, so it counts as granted
+    comp = _compose_sockets(tmp_path, {}, sockets=("x11",))
+    assert comp.sockets == ["x11"]
+
+
+def test_granted_sockets_deduped_across_modules(tmp_path):
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {
+            "a": {"sockets": ["wayland"]},
+            "b": {"sockets": ["wayland"]},
+        },
+        "apps": {"app": {"modules": ["a", "b"]}},
+    })
+    cfg = load_config([base])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user",
+                   env={"XDG_RUNTIME_DIR": "/run/user/1000",
+                        "WAYLAND_DISPLAY": "wayland-0"})
+    assert comp.sockets == ["wayland"]

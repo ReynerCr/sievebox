@@ -457,6 +457,7 @@ def _status_payload(cfg: Config, target: str, comp: Composition,
             "effective": comp.effective_modules,
         },
         "network": comp.network,
+        "sockets": comp.sockets,
         "relaxed": sorted(relaxed or set()),
         "here": {
             "path": comp.here,
@@ -484,6 +485,7 @@ def _handle_status(cfg: Config, target: str, comp: Composition, relaxed: set[str
     print(f"  Effective modules:  {' '.join(d['modules']['effective'])}")
     print(f"  Identity color:     {_color(d['color'])}{d['color']}{RESET}")
     print(f"  Network access:     {'enabled' if d['network'] else 'disabled'}")
+    print(f"  Sockets granted:    {' '.join(d['sockets']) or '(none)'}")
     state = "mounted" if d['here']['mounted'] else "not mounted"
     print(f"  Workspace ($HERE):  {state} ({d['here']['path']})")
     if d['relaxed']:

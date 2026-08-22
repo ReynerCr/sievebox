@@ -42,6 +42,7 @@ class Composition:
     here_mounted: bool
     home_violation: bool          # here == home and not allow_home
     shell_inits: list[str] = field(default_factory=list)
+    sockets: list[str] = field(default_factory=list)  # post-gating socket grants
 
 
 def compose(cfg: Config, app_name: str, *, here: str, home: str,
@@ -95,12 +96,20 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     for name in eff:
         mod = cfg.modules[name]
         if not fs_relaxed:
-            args += capabilities.module_bwrap_args(mod)
+            args += capabilities.module_bwrap_args(mod, env)
         args += _flatten(mod.raw_args, app_name, home)
         if mod.shell_init:
             shell_inits.append(mod.shell_init)
         setenv_entries.update(capabilities.module_setenv(mod))
     setenv_entries.update(app.setenv)
+
+    # Sockets whose bind templates resolved in this environment. A socket
+    # named by a module but gated out (unset $VAR) is not granted.
+    sockets_granted: list[str] = []
+    for name in eff:
+        for sock in cfg.modules[name].sockets:
+            if sock not in sockets_granted and capabilities.socket_binds(sock, env):
+                sockets_granted.append(sock)
 
     for name, value in setenv_entries.items():
         if value is None:
@@ -127,4 +136,5 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         here_mounted=here_mounted,
         home_violation=(here == home) and not app.allow_home,
         shell_inits=shell_inits,
+        sockets=sockets_granted,
     )
