@@ -91,7 +91,9 @@ $ sievebox --dry-run npm     # show the composed bwrap command without running
 
 Sievebox bounds what well-behaved or buggy apps can reach (keeps them off
 `$HOME`, strips host env via `--clearenv`, exposes only what their modules
-grant). It is not a boundary against a targeted exploit. It inherits
+grant; sandboxed scripts can see what they got through `SIEVEBOX_MODULES`,
+`SIEVEBOX_SOCKETS`, and `SIEVEBOX_DEVICES`). It is not a boundary against a
+targeted exploit. It inherits
 bubblewrap's limits, and bubblewrap's own warning applies: everything mounted
 into the sandbox can potentially escalate privileges. Treat it as another
 layer, not a vault. See [Limitations](#limitations) for the tradeoffs.

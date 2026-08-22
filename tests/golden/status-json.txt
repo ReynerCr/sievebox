@@ -1,6 +1,6 @@
 {
   "app": "mytool",
-  "bwrap_arg_count": 184,
+  "bwrap_arg_count": 193,
   "color": "39",
   "devices": [],
   "grants": {

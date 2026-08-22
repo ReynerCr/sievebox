@@ -119,21 +119,24 @@ modules:
     shell_init:
       - *rootful_x11
       - |
-        if [ -n "${WAYLAND_DISPLAY:-}" ]; then
-          if command -v xwayland-satellite >/dev/null; then
-            xwayland-satellite >/tmp/sievebox-x11.log 2>&1 &
-            for i in $(seq 1 50); do
-              D=$(sed -n 's/.*Connected to Xwayland on :\([0-9]*\).*/\1/p' /tmp/sievebox-x11.log | head -1)
-              [ -n "$D" ] && break
-              sleep 0.1
-            done
-            [ -n "$D" ] && export DISPLAY=":$D"
-          fi
-          if [ -z "$D" ] && command -v Xwayland >/dev/null; then
-            pkill -x xwayland-satellite 2>/dev/null
-            start_rootful_x11
-          fi
-        fi
+        # Xwayland needs the host Wayland socket: only start it if granted.
+        case " ${SIEVEBOX_SOCKETS:-} " in
+          *" wayland "*)
+            if command -v xwayland-satellite >/dev/null; then
+              xwayland-satellite >/tmp/sievebox-x11.log 2>&1 &
+              for i in $(seq 1 50); do
+                D=$(sed -n 's/.*Connected to Xwayland on :\([0-9]*\).*/\1/p' /tmp/sievebox-x11.log | head -1)
+                [ -n "$D" ] && break
+                sleep 0.1
+              done
+              [ -n "$D" ] && export DISPLAY=":$D"
+            fi
+            if [ -z "$D" ] && command -v Xwayland >/dev/null; then
+              pkill -x xwayland-satellite 2>/dev/null
+              start_rootful_x11
+            fi
+            ;;
+        esac
     incompatible: [x11-rootful, x11-dangerous]
 
   # Weak opt-in: host X session passthrough (can read/inject into other X11
