@@ -446,33 +446,11 @@ def _grants_by_module(cfg: Config, comp: Composition) -> dict[str, dict[str, lis
     return out
 
 
-def _handle_status(cfg: Config, target: str, comp: Composition, relaxed: set[str] | None = None) -> int:
-    relaxed = relaxed or set()
-    print(f"Sievebox status for: {target}")
-    print(f"  Config files:       {', '.join(str(p) for p in cfg.paths)}")
-    print(f"  Declared modules:   {' '.join(comp.declared_modules)}")
-    print(f"  Effective modules:  {' '.join(comp.effective_modules)}")
-    c = comp.color or DEFAULT_COLOR
-    print(f"  Identity color:     {_color(c)}{c}{RESET}")
-    print(f"  Network access:     {'enabled' if comp.network else 'disabled'}")
-    state = "mounted" if comp.here_mounted else "not mounted"
-    print(f"  Workspace ($HERE):  {state} ({comp.here})")
-    if relaxed:
-        measures = ", ".join(sorted(relaxed))
-        print(f"  Relaxed measures:   {measures}")
-    print(f"  bwrap arg count:    {len(comp.bwrap_args)}")
-    print()
-    print("  Grants by module:")
-    for name, g in _grants_by_module(cfg, comp).items():
-        detail = "  ".join(f"{k}: {' '.join(v)}" for k, v in g.items())
-        print(f"    {name:<16} {detail or '(none)'}")
-    return 0
-
-
-def _handle_status_json(cfg: Config, target: str, comp: Composition,
-                        relaxed: set[str] | None = None) -> int:
+def _status_payload(cfg: Config, target: str, comp: Composition,
+                    relaxed: set[str] | None = None) -> dict:
+    """Single source of status data: both renderers (human, JSON) read this."""
     grants = _grants_by_module(cfg, comp)
-    payload = {
+    return {
         "app": target,
         "modules": {
             "declared": comp.declared_modules,
@@ -484,6 +462,8 @@ def _handle_status_json(cfg: Config, target: str, comp: Composition,
             "path": comp.here,
             "mounted": comp.here_mounted,
         },
+        "color": comp.color or DEFAULT_COLOR,
+        "bwrap_arg_count": len(comp.bwrap_args),
         "grants": {
             "by_module": grants,
             "rw": sorted({p for g in grants.values() for p in g.get("rw", [])}),
@@ -494,7 +474,32 @@ def _handle_status_json(cfg: Config, target: str, comp: Composition,
                           for a in capabilities.module_setenv(cfg.modules[m])],
         },
     }
-    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _handle_status(cfg: Config, target: str, comp: Composition, relaxed: set[str] | None = None) -> int:
+    d = _status_payload(cfg, target, comp, relaxed)
+    print(f"Sievebox status for: {d['app']}")
+    print(f"  Config files:       {', '.join(str(p) for p in cfg.paths)}")
+    print(f"  Declared modules:   {' '.join(d['modules']['declared'])}")
+    print(f"  Effective modules:  {' '.join(d['modules']['effective'])}")
+    print(f"  Identity color:     {_color(d['color'])}{d['color']}{RESET}")
+    print(f"  Network access:     {'enabled' if d['network'] else 'disabled'}")
+    state = "mounted" if d['here']['mounted'] else "not mounted"
+    print(f"  Workspace ($HERE):  {state} ({d['here']['path']})")
+    if d['relaxed']:
+        print(f"  Relaxed measures:   {', '.join(d['relaxed'])}")
+    print(f"  bwrap arg count:    {d['bwrap_arg_count']}")
+    print()
+    print("  Grants by module:")
+    for name, g in d["grants"]["by_module"].items():
+        detail = "  ".join(f"{k}: {' '.join(v)}" for k, v in g.items())
+        print(f"    {name:<16} {detail or '(none)'}")
+    return 0
+
+
+def _handle_status_json(cfg: Config, target: str, comp: Composition,
+                        relaxed: set[str] | None = None) -> int:
+    print(json.dumps(_status_payload(cfg, target, comp, relaxed), indent=2, sort_keys=True))
     return 0
 
 
