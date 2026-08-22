@@ -54,7 +54,8 @@ def _compose_warnings(eff: list[str], cfg: Config, env: dict,
     wants_wayland = any(
         "wayland" in cfg.modules[n].sockets for n in eff
     )
-    if wants_wayland and "wayland" not in sockets_granted:
+    if wants_wayland and "wayland" not in sockets_granted \
+            and "x11" not in sockets_granted:
         x11_available = bool(env.get("DISPLAY")) or os.path.exists("/tmp/.X11-unix")
         if x11_available:
             out.append(
