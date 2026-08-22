@@ -144,6 +144,9 @@ only recognized **before** the binary name.
 
 - `--status <binary>`: show the resolved config for an app (modules, network
   decision, whether `$HERE` is mounted, bwrap arg count) **without running it**.
+  With `--json`, emit the same information as machine-readable JSON (app,
+  declared/effective modules, network, relaxed measures, and grants grouped by
+  rw/ro/dev/setenv, including runtime grants).
 - `--dry-run <binary>`: print the composed `bwrap` command without running it.
 - `--discover <binary>`: run the app under `strace` to find missing path
   permissions (see below). Needs `strace`.

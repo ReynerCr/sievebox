@@ -282,3 +282,60 @@ def test_empty_device_value_errors(monkeypatch, tmp_path):
     rc, out, err = _run(["--device=", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 2
     assert "--device= requires at least one device name" in err
+
+
+# --- --status --json ---
+
+def test_status_json_matches_golden(monkeypatch, tmp_path):
+    import json
+    monkeypatch.setenv("SIEVEBOX_CONFIG", str(REPO / "tests" / "validation" / "status-json.yaml"))
+    # Pin every env var the composed output reads (binds + setenv emission),
+    # so the arg count is independent of the host environment.
+    pinned = {
+        "HOME": "/home/user", "PATH": "/usr/bin:/bin", "USER": "user",
+        "LOGNAME": "user", "TERM": "xterm-256color", "COLORTERM": "truecolor",
+        "LANG": "C.UTF-8", "LANGUAGE": "", "LC_ALL": "", "LC_CTYPE": "",
+        "XDG_RUNTIME_DIR": "/run/user/1000", "XDG_SESSION_TYPE": "wayland",
+        "XDG_CURRENT_DESKTOP": "KDE", "XDG_SESSION_DESKTOP": "KDE",
+        "WAYLAND_DISPLAY": "wayland-0", "XAUTHORITY": "/home/user/.Xauthority",
+        "DISPLAY": ":0", "FOO": "foo",
+    }
+    for k, v in pinned.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.chdir(tmp_path)
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    rc = main(["--socket=x11", "--status", "--json", "mytool"])
+    assert rc == 0
+    d = json.loads(out.getvalue())
+    d["here"]["path"] = "__HERE__"
+    golden = (REPO / "tests" / "golden" / "status-json.txt").read_text()
+    assert json.dumps(d, indent=2, sort_keys=True) + "\n" == golden
+
+
+def test_status_json_validates_structure(monkeypatch, tmp_path):
+    import json
+    cfg = _write(tmp_path / "sievebox-profiles.yaml", {
+        "modules": {
+            "kvm_user": {"devices": ["kvm"]},
+            "network": {"raw_args": [["--share-net"]]},
+        },
+        "apps": {"mytool": {"modules": ["kvm_user", "network"], "color": "226"}},
+    })
+    monkeypatch.setenv("SIEVEBOX_CONFIG", str(cfg))
+    monkeypatch.chdir(tmp_path)
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    rc = main(["--device=kvm", "--status", "--json", "mytool"])
+    assert rc == 0
+    d = json.loads(out.getvalue())
+    assert d["app"] == "mytool"
+    assert d["network"] is True
+    assert d["modules"]["declared"] == ["kvm_user", "network", "__device_kvm"]
+    assert d["modules"]["effective"] == ["kvm_user", "network", "__device_kvm"]
+    assert "/dev/kvm" in d["grants"]["dev"]
+    assert "/dev/kvm" in d["grants"]["by_module"]["__device_kvm"]["dev"]
+    assert d["grants"]["by_module"]["kvm_user"]["dev"] == ["/dev/kvm"]
+    assert "PATH" in d["grants"]["setenv"]

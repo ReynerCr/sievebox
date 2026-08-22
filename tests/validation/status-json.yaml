@@ -1,0 +1,13 @@
+# Fixture for the --status --json golden test. Paths are deliberately fake
+# and absolute so the JSON output is deterministic regardless of the host.
+modules:
+  base_mod:
+    setenv: [FOO]
+    filesystem:
+      ro: [/opt/data]
+      rw: [/var/cache/tool]
+  kvm_user:
+    devices: [kvm]
+apps:
+  mytool:
+    modules: [base_mod]
