@@ -70,6 +70,13 @@ modules:
   cycle-protected).
 - `incompatible`: list of modules that cannot be active together; composition
   fails with an error if two incompatible modules end up in the effective set.
+- `claims` / `shares`: keys of resources the module holds exclusively or
+  shares with other modules. Composition fails when one key has several
+  holders and any of them is exclusive, so consumers of a resource stack
+  freely while a provider tolerates nobody else holding it. Modules written
+  independently can then declare the same key without knowing each other's
+  names. Naming the `x11` socket implies the shared holding `x11-display`,
+  and an explicit `claims: [x11-display]` makes it exclusive.
 - `setenv`: env vars to forward past `--clearenv`. Bare names forward the host
   value, and a mapping declares values that cross into the sandbox
   (see [below](#forward-an-env-var-past---clearenv)).
