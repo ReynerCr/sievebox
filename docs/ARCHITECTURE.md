@@ -27,12 +27,14 @@ tokens each takes (arity), and what category they belong to (`bind_rw`,
 flag lists. Adding a new bwrap directive only requires extending the table here.
 
 **`capabilities.py`**: The engine's capability registry: socket names
-(`wayland`, `pulse`, `pipewire`) mapped to their bwrap bind templates and
-setenv requirements, and known device names (`dri`, `snd`, ...). Also handles
-`~` and `$VAR` path expansion with existence gating. This is where future
-capabilities (rlimits, seccomp) would live. `config.py` imports the socket and
-device sets for validation, so adding a socket here automatically makes it
-valid in profiles.
+(`wayland`, `x11`, `pulse`, `pipewire`) mapped to their bwrap bind templates,
+setenv requirements, and the socket-to-module conflict map; known device
+names (`dri`, `snd`, ...); `~` and `$VAR` value expansion with unset-var
+gating. `granted_sockets`/`granted_devices` aggregate a module list into what
+the host actually granted (env-gated sockets, existence-gated devices).
+This is where future capabilities (rlimits, seccomp) would live. `config.py`
+imports the socket and device sets for validation, so adding a socket here
+automatically makes it valid in profiles.
 
 **`config.py`**: Loads YAML from multiple files (base, drop-ins,
 `$SIEVEBOX_CONFIG`), merges them (deep-merge by default, override mode
@@ -44,10 +46,12 @@ here.
 
 **`compose.py`**: Takes a resolved `App` and assembles the full bwrap
 argument vector: core args (with filesystem-relaxed variants), module
-capability binds, `raw_args`, setenv forwarding, and the `$HERE` mount.
-Returns a `Composition` with the args plus metadata (effective modules,
-color, network, home violation). This is the bridge between the config model
-and the actual bwrap invocation.
+capability binds (sockets resolve against the compose env), `raw_args`,
+setenv forwarding, and the `$HERE` mount. Returns a `Composition` with the
+args plus derived metadata: effective modules, color, granted sockets and
+devices, network (any effective module passing `--share-net`), home
+violation. This is the bridge between the config model and the actual bwrap
+invocation.
 
 **`cli.py`**: Parses command-line flags (`--relax`, `--module`, `--socket`,
 `--device`, `--dry-run`, `--discover`, `--list`, `--status`), loads config,
