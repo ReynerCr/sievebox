@@ -15,7 +15,9 @@ _VAR = re.compile(r"\$(\w+)|\$\{(\w+)\}")
 # Known device names under /dev that modules can request.
 KNOWN_DEVICES: set[str] = {"dri", "snd", "video", "input", "tty", "console", "kvm"}
 
-# socket name -> (mode, path template); each path gates on its own $VARs
+# socket name -> (mode, path template); each path gates on its own $VARs.
+# WAYLAND_DISPLAY is special: the protocol allows an absolute socket path,
+# in which case it is used directly instead of under $XDG_RUNTIME_DIR.
 _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
     "wayland": [("ro", "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY")],
     # Direct host X11 access: weakens security, opt-in only (the 'x11-dangerous' module).
@@ -84,6 +86,11 @@ def socket_binds(sock: str, env: Mapping[str, str] | None = None) -> list[tuple[
     did not resolve in this environment.
     """
     out: list[tuple[str, str]] = []
+    if sock == "wayland":
+        display = env.get("WAYLAND_DISPLAY") if env is not None \
+            else os.environ.get("WAYLAND_DISPLAY")
+        if display and display.startswith("/"):
+            return [("ro", display)]
     for mode, tmpl in _SOCKET_BINDS.get(sock, []):
         p = expand_value(tmpl, env)
         if p is not None:

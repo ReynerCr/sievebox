@@ -68,3 +68,19 @@ def test_granted_devices_deduped_across_modules():
     from sievebox.config import Module
     mods = [Module(name="a", devices=["null"]), Module(name="b", devices=["null"])]
     assert capabilities.granted_devices(mods) == ["null"]
+
+
+def test_wayland_absolute_display_path():
+    # absolute WAYLAND_DISPLAY is used directly, not under XDG_RUNTIME_DIR
+    env = {"WAYLAND_DISPLAY": "/run/user/1000/custom-socket"}
+    assert capabilities.socket_binds("wayland", env) == [("ro", "/run/user/1000/custom-socket")]
+
+
+def test_wayland_relative_display_path_uses_runtime_dir():
+    env = {"XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"}
+    assert capabilities.socket_binds("wayland", env) == [("ro", "/run/user/1000/wayland-0")]
+
+
+def test_wayland_absolute_display_path_host_env(monkeypatch):
+    monkeypatch.setenv("WAYLAND_DISPLAY", "/tmp/abs-wayland")
+    assert capabilities.socket_binds("wayland") == [("ro", "/tmp/abs-wayland")]
