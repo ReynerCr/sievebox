@@ -90,20 +90,30 @@ def test_wayland_display_path_resolution(monkeypatch):
     assert capabilities.socket_binds("wayland") == [("ro", "/tmp/abs-wayland")]
 
 
+def test_expand_value_tilde_uses_given_env(monkeypatch):
+    # with an explicit mapping, ~ resolves against its HOME exclusively
+    assert capabilities.expand_value("~/x", {"HOME": "/merged"}) == "/merged/x"
+    # no HOME in the mapping: gates out like an unset $VAR
+    monkeypatch.setenv("HOME", "/real/home")
+    assert capabilities.expand_value("~/x", {}) is None
+    # no mapping passed: host environment
+    assert capabilities.expand_value("~/x") == "/real/home/x"
+
+
 def test_socket_binds_gated_out_when_var_unset():
     assert capabilities.socket_binds("wayland", {}) == []
 
 
 def test_x11_socket_partial_resolution():
     # /tmp/.X11-unix has no $VARs and always resolves. $XAUTHORITY gates on
-    # the env mapping, ~/.Xauthority expands via ~ regardless of it
-    import os
+    # the env mapping; with an empty mapping ~ has no HOME either, so
+    # ~/.Xauthority gates out too
     binds = capabilities.socket_binds("x11", {})
-    assert binds[0] == ("ro", "/tmp/.X11-unix")
-    assert binds[1] == ("ro", os.path.expanduser("~/.Xauthority"))
-    binds = capabilities.socket_binds("x11", {"XAUTHORITY": "/home/u/.Xauthority"})
+    assert binds == [("ro", "/tmp/.X11-unix")]
+    binds = capabilities.socket_binds("x11", {"XAUTHORITY": "/home/u/.Xauthority",
+                                              "HOME": "/home/u"})
     assert binds == [("ro", "/tmp/.X11-unix"), ("ro", "/home/u/.Xauthority"),
-                     ("ro", os.path.expanduser("~/.Xauthority"))]
+                     ("ro", "/home/u/.Xauthority")]
 
 
 # --- granted aggregates ---
@@ -116,9 +126,9 @@ def test_granted_sockets_union_deduped():
     # pulse socket has no pulse-native gating vars, and XDG_RUNTIME_DIR set
     # lets it bind
     assert capabilities.granted_sockets(mods, env) == ["wayland", "pulse"]
-    # wayland gates out entirely without its vars, while pulse keeps its
-    # ~ cookie path
-    assert capabilities.granted_sockets(mods, {}) == ["pulse"]
+    # without its vars wayland gates out, and with an empty mapping pulse's
+    # ~ cookie path has no HOME to resolve against either
+    assert capabilities.granted_sockets(mods, {}) == []
 
 
 def test_granted_devices_gate_and_dedup():
