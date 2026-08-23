@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -126,3 +127,23 @@ def test_granted_devices_gate_and_dedup():
     mods = [Module(name="a", devices=["null", "nonexistent-dev-xyz"]),
             Module(name="b", devices=["null"])]
     assert capabilities.granted_devices(mods) == ["null"]
+
+
+def test_video_device_expands_to_camera_nodes(monkeypatch):
+    from sievebox.config import Module
+
+    cameras = ["/dev/video0", "/dev/video1"]
+    monkeypatch.setattr(capabilities.glob, "glob",
+                        lambda pattern: cameras if "video" in pattern else [])
+    real_exists = os.path.exists
+    monkeypatch.setattr(capabilities.os.path, "exists",
+                        lambda p: p in cameras or real_exists(p))
+    mod = Module(name="m", devices=["video"])
+    assert capabilities.granted_devices([mod]) == ["video0", "video1"]
+    args = capabilities.module_bwrap_args(mod)
+    assert args == ["--dev-bind-try", "/dev/video0", "/dev/video0",
+                    "--dev-bind-try", "/dev/video1", "/dev/video1"]
+    # no cameras: nothing granted and nothing bound
+    monkeypatch.setattr(capabilities.glob, "glob", lambda pattern: [])
+    assert capabilities.granted_devices([mod]) == []
+    assert capabilities.module_bwrap_args(mod) == []
