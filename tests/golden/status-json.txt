@@ -46,7 +46,8 @@
       "XDG_SESSION_DESKTOP",
       "FOO",
       "DISPLAY",
-      "XAUTHORITY"
+      "XAUTHORITY",
+      "APP_VAR"
     ]
   },
   "here": {

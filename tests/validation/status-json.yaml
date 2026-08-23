@@ -11,3 +11,4 @@ modules:
 apps:
   mytool:
     modules: [base_mod]
+    setenv: [APP_VAR]
