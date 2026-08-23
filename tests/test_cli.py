@@ -168,11 +168,13 @@ def test_modules_shown_in_status(monkeypatch, tmp_path):
 
 
 def test_modules_adds_capability_not_in_profile(monkeypatch, tmp_path):
-    # npm doesn't have gui by default; inject it
+    # npm doesn't have gui by default, inject it
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
     rc, out, err = _run(["--module=gui", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     # gui provides wayland socket bind
-    assert "wayland" in out.lower() or "XDG_RUNTIME_DIR" in out
+    assert "--ro-bind-try /run/user/1000/wayland-0" in out
 
 
 def test_dryrun_with_bwrap(monkeypatch, tmp_path):
@@ -182,6 +184,7 @@ def test_dryrun_with_bwrap(monkeypatch, tmp_path):
 
 
 def test_dryrun_shows_expanded_args_not_fd_form(monkeypatch, tmp_path):
+    monkeypatch.setenv("PNPM_HOME", "/home/user/.local/share/pnpm")
     rc, out, err = _run(["--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     assert "--args" not in out
