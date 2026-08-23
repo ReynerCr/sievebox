@@ -19,6 +19,20 @@ modules:
   bad_setenv_type:
     setenv: HOME
 
+  # setenv mapping values must be scalars or null
+  bad_setenv_value:
+    setenv:
+      FOO: [a, b]
+
+  # setenv list items must be strings
+  bad_setenv_item:
+    setenv: [42]
+
+  # setenv mapping names must be strings
+  bad_setenv_name:
+    setenv:
+      42: x
+
   # sockets must be a list
   bad_sockets_type:
     sockets: wayland

@@ -1,5 +1,8 @@
 invalid config (tests/validation/structural-errors.yaml):
   module 'bad_setenv_type': 'setenv' must be a list of names or a name -> value mapping
+  module 'bad_setenv_value': setenv value for 'FOO' must be a scalar or null
+  module 'bad_setenv_item': setenv entries must be names (strings)
+  module 'bad_setenv_name': setenv name must be a string, got 42
   module 'bad_shell_type': 'shell_init' must be a string or list
   module 'bad_extends_type': 'extends' must be a list
   module 'bad_sockets_type': 'sockets' must be a list

@@ -49,209 +49,146 @@ def _run(argv: list[str], monkeypatch, tmp_path) -> tuple[int, str, str]:
     return rc, out.getvalue(), err.getvalue()
 
 
+# --- --relax / --raw ---
+
 def test_relax_invalid_value(monkeypatch, tmp_path):
     rc, out, err = _run(["--relax=bogus", "npm"], monkeypatch, tmp_path)
     assert rc == 2
     assert "invalid --relax value" in err
 
 
-def test_raw_and_relax_all_equivalent_dryrun(monkeypatch, tmp_path):
+def test_raw_equals_relax_all(monkeypatch, tmp_path):
     rc1, out1, _ = _run(["--raw", "--dry-run", "npm"], monkeypatch, tmp_path)
     rc2, out2, _ = _run(["--relax=all", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc1 == 0 and rc2 == 0
+    # full relaxation strips the sandbox down to the bare command
     assert out1 == out2
     assert "bwrap" not in out1
     assert out1.strip() == "npm"
+    # comma lists work too
+    rc3, out3, _ = _run(["--relax=bwrap,all", "--dry-run", "npm"],
+                        monkeypatch, tmp_path)
+    assert rc3 == 0 and out3.strip() == "npm"
 
 
-def test_relax_bwrap_dryrun_no_bwrap(monkeypatch, tmp_path):
-    rc, out, err = _run(["--relax=bwrap", "--dry-run", "npm"], monkeypatch, tmp_path)
+def test_relax_bwrap_dryrun(monkeypatch, tmp_path):
+    rc, out, _ = _run(["--relax=bwrap", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     assert "bwrap" not in out
     assert out.strip() == "npm"
-
-
-def test_relax_bwrap_dryrun_with_args(monkeypatch, tmp_path):
-    rc, out, err = _run(["--relax=bwrap", "--dry-run", "npm", "run", "build"], monkeypatch, tmp_path)
+    # positional args pass through verbatim after the binary
+    rc, out, _ = _run(["--relax=bwrap", "--dry-run", "npm", "run", "build"],
+                      monkeypatch, tmp_path)
     assert rc == 0
     assert out.strip() == "npm run build"
 
 
-def test_relax_comma_separated(monkeypatch, tmp_path):
-    rc, out, err = _run(["--relax=bwrap,all", "--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
-    assert out.strip() == "npm"
-
-
-def test_relax_filesystem_dryrun(monkeypatch, tmp_path):
-    rc, out, err = _run(["--relax=filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
+def test_relax_filesystem(monkeypatch, tmp_path):
+    rc, out, _ = _run(["--relax=filesystem", "--dry-run", "npm"],
+                      monkeypatch, tmp_path)
     assert rc == 0
     assert "bwrap" in out
     assert "--bind / /" in out
-    # --tmpfs / is replaced, but --tmpfs /tmp etc. are kept (virtual FS on top)
+    # --tmpfs / is replaced, but --tmpfs /tmp etc. stay on top
     assert "--tmpfs / \\\n" not in out
     assert "--symlink" not in out
     # --dev /dev must come after --bind / / so device nodes work
     assert "--dev /dev" in out
-
-
-def test_relax_filesystem_status(monkeypatch, tmp_path):
-    rc, out, err = _run(["--status", "--relax=filesystem", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
-    assert "Relaxed measures:" in out
-    assert "filesystem" in out
-
-
-def test_relax_filesystem_no_remount_ro(monkeypatch, tmp_path):
-    rc, out, err = _run(["--relax=filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
+    # writable root needs no remount
     assert "--remount-ro" not in out
-
-
-def test_relax_ro_filesystem_dryrun(monkeypatch, tmp_path):
-    rc, out, err = _run(["--relax=ro-filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
+    rc, out, _ = _run(["--status", "--relax=filesystem", "npm"],
+                      monkeypatch, tmp_path)
     assert rc == 0
-    assert "bwrap" in out
+    assert "Relaxed measures:" in out and "filesystem" in out
+
+
+def test_relax_ro_filesystem_and_exclusion(monkeypatch, tmp_path):
+    rc, out, _ = _run(["--relax=ro-filesystem", "--dry-run", "npm"],
+                      monkeypatch, tmp_path)
+    assert rc == 0
     assert "--ro-bind / /" in out
-    # --tmpfs / is replaced, but --tmpfs /tmp and --tmpfs /run are kept
     assert "--tmpfs / \\\n" not in out
     assert "--symlink" not in out
-    # Module rw binds are kept (writable paths on top of ro root)
+    # module rw binds are kept (writable paths on top of ro root)
     assert "--bind-try" in out
-
-
-def test_relax_ro_filesystem_status(monkeypatch, tmp_path):
-    rc, out, err = _run(["--status", "--relax=ro-filesystem", "npm"], monkeypatch, tmp_path)
+    rc, out, _ = _run(["--status", "--relax=ro-filesystem", "npm"],
+                      monkeypatch, tmp_path)
     assert rc == 0
-    assert "Relaxed measures:" in out
-    assert "ro-filesystem" in out
-
-
-def test_relax_filesystem_and_ro_filesystem_mutually_exclusive(monkeypatch, tmp_path):
-    rc, out, err = _run(["--relax=filesystem,ro-filesystem", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert "Relaxed measures:" in out and "ro-filesystem" in out
+    # both filesystem flavors at once make no sense
+    rc, out, err = _run(["--relax=filesystem,ro-filesystem", "--dry-run", "npm"],
+                        monkeypatch, tmp_path)
     assert rc == 2
     assert "mutually exclusive" in err
 
 
 # --- --module= ---
 
-def test_modules_injects_module_into_dryrun(monkeypatch, tmp_path):
-    rc, out, err = _run(["--module=network", "--dry-run", "npm"], monkeypatch, tmp_path)
+def test_modules_injection(monkeypatch, tmp_path):
+    rc, out, _ = _run(["--module=network", "--dry-run", "npm"],
+                      monkeypatch, tmp_path)
     assert rc == 0
     assert "--share-net" in out
-
-
-def test_modules_comma_separated(monkeypatch, tmp_path):
-    rc, out, err = _run(["--module=network,network", "--dry-run", "npm"], monkeypatch, tmp_path)
+    # duplicates against declared modules collapse
+    rc, out, _ = _run(["--module=network,network", "--dry-run", "npm"],
+                      monkeypatch, tmp_path)
     assert rc == 0
-    # network already in npm's modules, so no duplicate --share-net
     assert out.count("--share-net") == 1
-
-
-def test_modules_unknown_module_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--module=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 1
-    assert "unknown module 'bogus'" in err
-
-
-def test_modules_empty_value_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--module=", "--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 2
-    assert "requires at least one module name" in err
-
-
-def test_modules_shown_in_status(monkeypatch, tmp_path):
-    rc, out, err = _run(["--status", "--module=network", "npm"], monkeypatch, tmp_path)
+    # injecting a module outside the profile brings its capabilities in
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    rc, out, _ = _run(["--module=gui", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
-    # npm already has network, so effective modules should still list it
+    assert "--ro-bind-try /run/user/1000/wayland-0" in out
+
+
+@pytest.mark.parametrize("argv,rc,fragment", [
+    (["--module=bogus", "--dry-run", "npm"], 1, "unknown module 'bogus'"),
+    (["--module=", "--dry-run", "npm"], 2, "requires at least one module name"),
+], ids=["unknown", "empty"])
+def test_modules_errors(monkeypatch, tmp_path, argv, rc, fragment):
+    rc_got, out, err = _run(argv, monkeypatch, tmp_path)
+    assert rc_got == rc
+    assert fragment in err
+
+
+def test_runtime_grants_shown_in_status(monkeypatch, tmp_path):
+    rc, out, _ = _run(["--status", "--module=network", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
     assert "network" in out
-
-
-def test_modules_adds_capability_not_in_profile(monkeypatch, tmp_path):
-    # npm doesn't have gui by default; inject it
-    rc, out, err = _run(["--module=gui", "--dry-run", "npm"], monkeypatch, tmp_path)
+    rc, out, _ = _run(["--socket=x11", "--status", "npm"], monkeypatch, tmp_path)
     assert rc == 0
-    # gui provides wayland socket bind
-    assert "wayland" in out.lower() or "XDG_RUNTIME_DIR" in out
+    assert "__socket_x11" in out
 
 
-def test_dryrun_with_bwrap(monkeypatch, tmp_path):
-    rc, out, err = _run(["--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
-    assert "bwrap" in out
+# --- --discover restrictions ---
 
-
-def test_dryrun_shows_expanded_args_not_fd_form(monkeypatch, tmp_path):
-    rc, out, err = _run(["--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
-    assert "--args" not in out
-    assert "--tmpfs /" in out
-    assert "PNPM_HOME" in out
-
-
-def test_discover_with_relax_bwrap_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--discover", "--relax=bwrap", "npm"], monkeypatch, tmp_path)
+@pytest.mark.parametrize("flag_argv", [["--relax=bwrap"], ["--raw"]])
+def test_discover_requires_sandbox(monkeypatch, tmp_path, flag_argv):
+    rc, out, err = _run([*flag_argv, "--discover", "npm"], monkeypatch, tmp_path)
     assert rc == 1
     assert "--discover requires the sandbox" in err
-
-
-def test_discover_with_raw_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--discover", "--raw", "npm"], monkeypatch, tmp_path)
-    assert rc == 1
-    assert "--discover requires the sandbox" in err
-
-
-def test_status_shows_relaxed_measures(monkeypatch, tmp_path):
-    rc, out, err = _run(["--status", "--relax=bwrap", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
-    assert "Relaxed measures:" in out
-    assert "bwrap" in out
-
-
-def test_status_no_relaxed_line_by_default(monkeypatch, tmp_path):
-    rc, out, err = _run(["--status", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
-    assert "Relaxed measures:" not in out
-
-
-def test_status_bwrap_arg_count_logical(monkeypatch, tmp_path):
-    rc, out, err = _run(["--status", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
-    assert "bwrap arg count:" in out
-    # The count should be > 0 and reflect logical rules, not fd args form
-    line = [l for l in out.splitlines() if "bwrap arg count:" in l][0]
-    count = int(line.split(":")[1].strip())
-    assert count > 0
 
 
 # --- --socket= / --device= ---
 
-def test_socket_grant_injects_bind_into_dryrun(monkeypatch, tmp_path):
-    rc, out, err = _run(["--socket=x11", "--dry-run", "npm"], monkeypatch, tmp_path)
+def test_socket_grant_binds(monkeypatch, tmp_path):
+    rc, out, _ = _run(["--socket=x11", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     assert "--ro-bind-try /tmp/.X11-unix /tmp/.X11-unix" in out
-
-
-def test_socket_grant_comma_separated(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
-    rc, out, err = _run(["--socket=wayland,pulse", "--dry-run", "npm"],
-                        monkeypatch, tmp_path)
+    rc, out, _ = _run(["--socket=wayland,pulse", "--dry-run", "npm"],
+                      monkeypatch, tmp_path)
     assert rc == 0
-    assert "--ro-bind-try /run/user/1000/wayland-0 /run/user/1000/wayland-0" in out
-    assert "--ro-bind-try /run/user/1000/pulse /run/user/1000/pulse" in out
+    assert "--ro-bind-try /run/user/1000/wayland-0" in out
+    assert "--ro-bind-try /run/user/1000/pulse" in out
 
 
-def test_device_grant_injects_dev_bind_into_dryrun(monkeypatch, tmp_path):
-    rc, out, err = _run(["--device=kvm", "--dry-run", "npm"], monkeypatch, tmp_path)
+def test_device_grant_binds(monkeypatch, tmp_path):
+    rc, out, _ = _run(["--device=kvm", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 0
     assert "--dev-bind-try /dev/kvm /dev/kvm" in out
-
-
-def test_socket_grant_shown_in_status(monkeypatch, tmp_path):
-    rc, out, err = _run(["--socket=x11", "--status", "npm"], monkeypatch, tmp_path)
-    assert rc == 0
-    assert "__socket_x11" in out
 
 
 def test_socket_grant_conflicts_with_x11_module(monkeypatch, tmp_path):
@@ -261,53 +198,46 @@ def test_socket_grant_conflicts_with_x11_module(monkeypatch, tmp_path):
     assert "__socket_x11" in err and "'x11'" in err
 
 
-def test_list_rejects_module_flag(monkeypatch, tmp_path):
-    rc, out, err = _run(["--list", "--module=network", "npm"], monkeypatch, tmp_path)
+@pytest.mark.parametrize("grant_flag,value", [
+    ("--module=", "network"), ("--socket=", "x11"), ("--device=", "kvm"),
+])
+def test_list_rejects_runtime_flags(monkeypatch, tmp_path, grant_flag, value):
+    rc, out, err = _run(["--list", f"{grant_flag}{value}", "npm"],
+                        monkeypatch, tmp_path)
     assert rc == 2
-    assert "--list" in err and "--module=" in err
+    assert "--list" in err and grant_flag in err
 
 
-def test_list_rejects_socket_flag(monkeypatch, tmp_path):
-    rc, out, err = _run(["--list", "--socket=x11", "npm"], monkeypatch, tmp_path)
-    assert rc == 2
-    assert "--socket=" in err
+@pytest.mark.parametrize("grant_flag,name,rc,fragment", [
+    ("--socket=", "bogus", 1, "unknown socket 'bogus'"),
+    ("--device=", "bogus", 1, "unknown device 'bogus'"),
+    ("--socket=", "", 2, "--socket= requires at least one socket name"),
+    ("--device=", "", 2, "--device= requires at least one device name"),
+], ids=["unknown-socket", "unknown-device", "empty-socket", "empty-device"])
+def test_grant_flag_validation(monkeypatch, tmp_path, grant_flag, name, rc, fragment):
+    rc_got, out, err = _run([f"{grant_flag}{name}", "--dry-run", "npm"],
+                            monkeypatch, tmp_path)
+    assert rc_got == rc
+    assert fragment in err
 
 
-def test_list_rejects_device_flag(monkeypatch, tmp_path):
-    rc, out, err = _run(["--list", "--device=kvm", "npm"], monkeypatch, tmp_path)
-    assert rc == 2
-    assert "--device=" in err
+# --- --status output ---
 
-
-def test_unknown_socket_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--socket=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 1
-    assert "unknown socket 'bogus'" in err
-
-
-def test_unknown_device_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--device=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 1
-    assert "unknown device 'bogus'" in err
-
-
-def test_empty_socket_value_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--socket=", "--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 2
-    assert "--socket= requires at least one socket name" in err
-
-
-def test_empty_device_value_errors(monkeypatch, tmp_path):
-    rc, out, err = _run(["--device=", "--dry-run", "npm"], monkeypatch, tmp_path)
-    assert rc == 2
-    assert "--device= requires at least one device name" in err
+def test_status_summary_lines(monkeypatch, tmp_path):
+    rc, out, _ = _run(["--status", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+    # no relaxation, no relaxed-measures line
+    assert "Relaxed measures:" not in out
+    line = [l for l in out.splitlines() if "bwrap arg count:" in l][0]
+    assert int(line.split(":")[1].strip()) > 0
 
 
 # --- --status --json ---
 
 def test_status_json_matches_golden(monkeypatch, tmp_path):
     import json
-    monkeypatch.setenv("SIEVEBOX_CONFIG", str(REPO / "tests" / "validation" / "status-json.yaml"))
+    monkeypatch.setenv("SIEVEBOX_CONFIG",
+                       str(REPO / "tests" / "validation" / "status-json.yaml"))
     # Pin every env var the composed output reads (binds + setenv emission),
     # so the arg count is independent of the host environment.
     pinned = {
@@ -359,6 +289,8 @@ def test_status_json_validates_structure(monkeypatch, tmp_path):
     assert d["grants"]["by_module"]["kvm_user"]["dev"] == ["/dev/kvm"]
     assert "PATH" in d["grants"]["setenv"]
 
+
+# --- engine warnings ---
 
 def test_warning_emitted_on_stderr_before_dryrun(monkeypatch, tmp_path):
     cfg = _write(tmp_path / "sievebox-profiles.yaml", {

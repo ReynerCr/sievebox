@@ -47,18 +47,10 @@ def _format_probing(p: list[dict]) -> str:
 
 # --- Golden file tests --------------------------------------------------------
 
-def test_failures_match_golden():
-    f, _, _ = _run_pipeline()
+def test_classification_matches_goldens():
+    f, p, s = _run_pipeline()
     assert _format_failures(f) == (D / "expected_failures.log").read_text()
-
-
-def test_probing_match_golden():
-    _, p, _ = _run_pipeline()
     assert _format_probing(p) == (D / "expected_probing.log").read_text()
-
-
-def test_summary_match_golden():
-    _, _, s = _run_pipeline()
     assert s + "\n" == (D / "expected_summary.txt").read_text()
 
 
