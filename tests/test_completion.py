@@ -45,16 +45,15 @@ def test_complete_flags():
     assert len(lines) == len(_COMPLETE_FLAGS)
     for flag in _COMPLETE_FLAGS:
         assert flag in lines
-
-
-def test_complete_flags_no_args_returns_zero():
-    rc = _handle_complete([])
-    assert rc == 0
+    # grant flags are completable too
+    for flag in ("--module=", "--socket=", "--device="):
+        assert flag in lines
 
 
 def test_complete_unknown_context_returns_zero():
-    rc = _handle_complete(["bogus"])
-    assert rc == 0
+    # no args and unknown contexts must never error into someone's shell
+    assert _handle_complete([]) == 0
+    assert _handle_complete(["bogus"]) == 0
 
 
 def test_complete_modules_without_config_returns_empty(monkeypatch, tmp_path):
@@ -99,16 +98,7 @@ def test_complete_apps_includes_globs(monkeypatch, tmp_path):
     assert "node-*" in lines
 
 
-def test_complete_sockets():
-    lines = _call("sockets")
-    assert sorted(lines) == ["pipewire", "pulse", "wayland", "x11"]
-
-
-def test_complete_devices():
-    lines = _call("devices")
-    assert "kvm" in lines and "dri" in lines
-
-
-def test_complete_flags_include_grant_flags():
-    lines = _call("flags")
-    assert "--socket=" in lines and "--device=" in lines
+def test_complete_sockets_and_devices():
+    assert sorted(_call("sockets")) == ["pipewire", "pulse", "wayland", "x11"]
+    devices = _call("devices")
+    assert "kvm" in devices and "dri" in devices

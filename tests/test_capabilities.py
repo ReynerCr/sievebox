@@ -61,7 +61,7 @@ def test_binds_different_modes_not_deduped():
 def test_module_holdings_strongest_mode_wins_per_key():
     from sievebox.config import Module
 
-    # a module never holds both modes of one key; the stronger replaces
+    # a module never holds both modes of one key: the stronger replaces
     # the weaker regardless of declaration order or socket implication
     assert capabilities.module_holdings(
         Module(name="m", sockets=["x11"], claims=["x11-display"]),
@@ -76,10 +76,17 @@ def test_module_holdings_strongest_mode_wins_per_key():
 
 # --- socket resolution ---
 
-def test_socket_binds_resolve_against_env():
+def test_wayland_display_path_resolution(monkeypatch):
     env = {"XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"}
-    binds = capabilities.socket_binds("wayland", env)
-    assert binds == [("ro", "/run/user/1000/wayland-0")]
+    # relative name joins the runtime dir
+    assert capabilities.socket_binds("wayland", env) == [("ro", "/run/user/1000/wayland-0")]
+    # absolute path binds directly
+    env["WAYLAND_DISPLAY"] = "/tmp/abs-wayland"
+    assert capabilities.socket_binds("wayland", env) == [("ro", "/tmp/abs-wayland")]
+    # no mapping passed: host environment
+    monkeypatch.setenv("WAYLAND_DISPLAY", "/tmp/abs-wayland")
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    assert capabilities.socket_binds("wayland") == [("ro", "/tmp/abs-wayland")]
 
 
 def test_socket_binds_gated_out_when_var_unset():
@@ -105,36 +112,17 @@ def test_granted_sockets_union_deduped():
     env = {"XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"}
     mods = [Module(name="a", sockets=["wayland"]),
             Module(name="b", sockets=["wayland", "pulse"])]
-    # pulse socket has no pulse-native gating vars; XDG_RUNTIME_DIR set so it binds
+    # pulse socket has no pulse-native gating vars, and XDG_RUNTIME_DIR set
+    # lets it bind
     assert capabilities.granted_sockets(mods, env) == ["wayland", "pulse"]
-    # wayland gates out entirely without its vars; pulse keeps its ~ cookie path
+    # wayland gates out entirely without its vars, while pulse keeps its
+    # ~ cookie path
     assert capabilities.granted_sockets(mods, {}) == ["pulse"]
 
 
-def test_granted_devices_existence_gate():
+def test_granted_devices_gate_and_dedup():
     from sievebox.config import Module
-    # /dev/null exists everywhere; the other name never does
-    mods = [Module(name="a", devices=["null", "nonexistent-dev-xyz"])]
+    # /dev/null exists everywhere, the other name never does, dupes collapse
+    mods = [Module(name="a", devices=["null", "nonexistent-dev-xyz"]),
+            Module(name="b", devices=["null"])]
     assert capabilities.granted_devices(mods) == ["null"]
-
-
-def test_granted_devices_deduped_across_modules():
-    from sievebox.config import Module
-    mods = [Module(name="a", devices=["null"]), Module(name="b", devices=["null"])]
-    assert capabilities.granted_devices(mods) == ["null"]
-
-
-def test_wayland_absolute_display_path():
-    # absolute WAYLAND_DISPLAY is used directly, not under XDG_RUNTIME_DIR
-    env = {"WAYLAND_DISPLAY": "/run/user/1000/custom-socket"}
-    assert capabilities.socket_binds("wayland", env) == [("ro", "/run/user/1000/custom-socket")]
-
-
-def test_wayland_relative_display_path_uses_runtime_dir():
-    env = {"XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"}
-    assert capabilities.socket_binds("wayland", env) == [("ro", "/run/user/1000/wayland-0")]
-
-
-def test_wayland_absolute_display_path_host_env(monkeypatch):
-    monkeypatch.setenv("WAYLAND_DISPLAY", "/tmp/abs-wayland")
-    assert capabilities.socket_binds("wayland") == [("ro", "/tmp/abs-wayland")]
