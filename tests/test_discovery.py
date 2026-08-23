@@ -62,6 +62,56 @@ def test_summary_match_golden():
     assert s + "\n" == (D / "expected_summary.txt").read_text()
 
 
+# --- Interrupt / error handling -----------------------------------------------
+
+def _run_discovery(tmp_path, monkeypatch, strace_fn):
+    from sievebox.config import Config
+
+    monkeypatch.setattr(discovery, "_run_strace", strace_fn)
+    state = tmp_path / "state"
+    rc = discovery.run_discovery(
+        Config(paths=[]), "node", ["--args", "3"], [], (),
+        "/home/user/project", "/home/user", str(state),
+        ["simple_module"],
+    )
+    run_dir = next((state / "discovery").iterdir())
+    return rc, run_dir
+
+
+def test_discover_interrupt_writes_partial_summary(tmp_path, monkeypatch):
+    def interrupted(trace_path, *a):
+        # strace writes incrementally, so a killed run leaves a partial trace
+        partial = TRACE.read_text().splitlines(keepends=True)[:5]
+        trace_path.write_text("".join(partial))
+        raise KeyboardInterrupt
+
+    rc, run_dir = _run_discovery(tmp_path, monkeypatch, interrupted)
+    assert rc == 130
+    # the partial trace still classifies and summarizes instead of being
+    # lost to a traceback
+    assert (run_dir / "summary.txt").read_text().strip()
+    assert (run_dir / "failures.log").exists()
+    assert (run_dir / "probing.log").exists()
+
+
+def test_strace_spawn_failure_returns_127(tmp_path, monkeypatch):
+    import subprocess
+
+    def boom(*a, **kw):
+        raise OSError("strace vanished")
+
+    monkeypatch.setattr(discovery.subprocess, "run", boom)
+    rc = discovery._run_strace(tmp_path / "trace.raw", [], ())
+    assert rc == 127
+
+
+def test_run_strace_returns_child_exit_code(tmp_path, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 42))
+    assert discovery._run_strace(tmp_path / "trace.raw", [], ()) == 42
+
+
 # --- Project detection (needs real filesystem) --------------------------------
 
 def test_project_detection(tmp_path):
