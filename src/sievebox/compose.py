@@ -45,6 +45,7 @@ class Composition:
     sockets: list[str] = field(default_factory=list)  # granted (post-gating)
     devices: list[str] = field(default_factory=list)  # granted (post-gating)
     warnings: list[str] = field(default_factory=list)
+    setenv: list[str] = field(default_factory=list)  # resolved names, precedence order
 
 
 def _compose_warnings(eff: list[str], cfg: Config, env: dict,
@@ -192,4 +193,5 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
         sockets=sockets_granted,
         devices=devices_granted,
         warnings=warns,
+        setenv=list(setenv_entries),
     )

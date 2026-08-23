@@ -478,9 +478,7 @@ def _status_payload(cfg: Config, target: str, comp: Composition,
             "rw": sorted({p for g in grants.values() for p in g.get("rw", [])}),
             "ro": sorted({p for g in grants.values() for p in g.get("ro", [])}),
             "dev": sorted({p for g in grants.values() for p in g.get("dev", [])}),
-            "setenv": list(cfg.core.setenv)
-                       + [a for m in comp.effective_modules
-                          for a in capabilities.module_setenv(cfg.modules[m])],
+            "setenv": comp.setenv,
         },
     }
 
