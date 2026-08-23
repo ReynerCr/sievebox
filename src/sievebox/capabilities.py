@@ -57,9 +57,15 @@ def expand_value(value: str, env: Mapping[str, str] | None = None) -> str | None
     """Expand ~ and $VARs. Return None if any referenced var is unset/empty.
 
     `env` defaults to the host environment; compose passes the merged env
-    (os.environ + app-provided values) when expanding env var values.
+    (os.environ + app-provided values) when expanding env var values. When
+    `env` is given, both $VARs and ~ resolve against it exclusively.
     """
-    value = os.path.expanduser(value)
+    src = os.environ if env is None else env
+    if value.startswith("~"):
+        home = src.get("HOME")
+        if not home:
+            return None
+        value = home + value[1:]
     missing = False
 
     def repl(m: re.Match) -> str:

@@ -420,8 +420,9 @@ def test_compose_env_value_expansion(tmp_path, monkeypatch):
     comp = _compose_env_app(tmp_path, {"FOO": "${HOME}/x"}, ["FOO"],
                             env={"HOME": "/home/user"})
     assert _setenv_value(comp.bwrap_args, "FOO") == "/home/user/x"
-    # ~ expands too
-    comp = _compose_env_app(tmp_path, {"FOO": "~/x"}, ["FOO"], env={})
+    # ~ expands against the merged env's HOME
+    comp = _compose_env_app(tmp_path, {"FOO": "~/x"}, ["FOO"],
+                            env={"HOME": "/home/user"})
     assert _setenv_value(comp.bwrap_args, "FOO") == "/home/user/x"
     # declared values chain through each other
     comp = _compose_env_app(tmp_path, {"A": "$HOME/x", "B": "$A/y"}, ["A", "B"],
