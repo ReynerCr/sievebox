@@ -252,6 +252,12 @@ def main(argv: list[str] | None = None) -> int:
     if args is None:
         return rc
 
+    if args.mode == "list" and (args.inject_modules or args.grant_sockets
+                                or args.grant_devices):
+        _err("--list documents profile state and cannot be combined with "
+             "--module=, --socket=, or --device=")
+        return 2
+
     try:
         cfg = load_config(find_config_files(_config_search_dir()))
     except ConfigError as e:

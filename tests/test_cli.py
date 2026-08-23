@@ -261,6 +261,24 @@ def test_socket_grant_conflicts_with_x11_module(monkeypatch, tmp_path):
     assert "__socket_x11" in err and "'x11'" in err
 
 
+def test_list_rejects_module_flag(monkeypatch, tmp_path):
+    rc, out, err = _run(["--list", "--module=network", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "--list" in err and "--module=" in err
+
+
+def test_list_rejects_socket_flag(monkeypatch, tmp_path):
+    rc, out, err = _run(["--list", "--socket=x11", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "--socket=" in err
+
+
+def test_list_rejects_device_flag(monkeypatch, tmp_path):
+    rc, out, err = _run(["--list", "--device=kvm", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "--device=" in err
+
+
 def test_unknown_socket_errors(monkeypatch, tmp_path):
     rc, out, err = _run(["--socket=bogus", "--dry-run", "npm"], monkeypatch, tmp_path)
     assert rc == 1
