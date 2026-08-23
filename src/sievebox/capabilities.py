@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 from collections.abc import Mapping
@@ -121,8 +122,8 @@ def module_bwrap_args(module: Module, env: Mapping[str, str] | None = None) -> l
         if b := _bind("rw", p):
             bind(*b)
     for dev in module.devices:
-        node = f"/dev/{dev}"
-        bind("--dev-bind-try", node, node)
+        for node in device_nodes(dev):
+            bind("--dev-bind-try", node, node)
     for sock in module.sockets:
         for mode, path in socket_binds(sock, env):
             bind(_BIND_FLAG[mode], path, path)
@@ -171,18 +172,27 @@ def granted_sockets(modules: list[Module], env: Mapping[str, str]) -> list[str]:
     return out
 
 
+def device_nodes(name: str) -> list[str]:
+    """Host nodes a device name refers to; `video` expands to all cameras."""
+    if name == "video":
+        return sorted(glob.glob("/dev/video[0-9]*"))
+    return [f"/dev/{name}"]
+
+
 def granted_devices(modules: list[Module]) -> list[str]:
     """Devices granted across modules: union, deduped, existence-gated.
 
     A device whose /dev/<name> node is missing from the host is not granted
-    (bwrap's --dev-bind-try would silently skip it anyway).
+    (bwrap's --dev-bind-try would silently skip it anyway). `video` expands
+    to the individual /dev/videoN nodes that exist.
     """
     out: list[str] = []
     for m in modules:
         for dev in m.devices:
-            node = f"/dev/{dev}"
-            if dev not in out and os.path.exists(node):
-                out.append(dev)
+            for node in device_nodes(dev):
+                name = node.removeprefix("/dev/")
+                if os.path.exists(node) and name not in out:
+                    out.append(name)
     return out
 
 

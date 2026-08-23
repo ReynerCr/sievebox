@@ -687,6 +687,42 @@ def test_wayland_warning_fires_when_x_available(tmp_path, monkeypatch):
     assert len(comp.warnings) == 1
 
 
+# --- runtime grant gating warnings ---
+
+def test_runtime_grant_gating_warnings(tmp_path, monkeypatch):
+    from sievebox.config import Module
+
+    real_exists = os.path.exists
+    monkeypatch.setattr("sievebox.capabilities.os.path.exists",
+                        lambda p: False if p.startswith("/dev/") else real_exists(p))
+    base = _write(tmp_path / "base.yaml", {
+        "modules": {"m": {}},
+        "apps": {"app": {"modules": ["m"]}},
+    })
+    cfg = load_config([base])
+    # explicit runtime requests that gate out produce a warning each
+    cfg.modules["__device_kvm"] = Module(name="__device_kvm", devices=["kvm"])
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={},
+                   inject_modules=["__device_kvm"])
+    assert comp.warnings == [
+        "--device=kvm: not granted, no matching /dev node exists on the host."]
+
+    cfg.modules["__socket_wayland"] = Module(name="__socket_wayland",
+                                             sockets=["wayland"])
+    real_exists2 = os.path.exists
+    monkeypatch.setattr("sievebox.compose.os.path.exists",
+                        lambda p: False if p == "/tmp/.X11-unix" else real_exists2(p))
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={},
+                   inject_modules=["__device_kvm", "__socket_wayland"])
+    assert any("--socket=wayland" in w for w in comp.warnings)
+    # granted devices never warn
+    monkeypatch.setattr("sievebox.capabilities.os.path.exists",
+                        lambda p: True if p == "/dev/kvm" else real_exists(p))
+    comp = compose(cfg, "app", here="/tmp", home="/home/user", env={},
+                   inject_modules=["__device_kvm"])
+    assert comp.warnings == []
+
+
 def test_no_wayland_warnings(tmp_path, monkeypatch):
     real_exists = os.path.exists
 
