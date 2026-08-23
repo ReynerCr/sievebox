@@ -162,11 +162,16 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
 
     for name, value in setenv_entries.items():
         if value is None:
+            # bare name: forward the host value, drop when unset/empty there
             val = env.get(name)
+            if val:
+                args += ["--setenv", name, val]
         else:
+            # declared value: expansion may gate out, but an explicit empty
+            # string crosses into the sandbox as an exported empty variable
             val = capabilities.expand_value(value, env)
-        if val:
-            args += ["--setenv", name, val]
+            if val is not None:
+                args += ["--setenv", name, val]
 
     # Composition facts for in-sandbox scripts, next to SIEVEBOX_COLOR.
     # Space-separated so `for s in $SIEVEBOX_SOCKETS` works in bash.
