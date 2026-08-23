@@ -467,7 +467,12 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     print(f"[discovery] Artifacts: {run_dir}")
     print()
 
-    rc = _run_strace(trace, bwrap_argv, pass_fds)
+    interrupted = False
+    try:
+        rc = _run_strace(trace, bwrap_argv, pass_fds)
+    except KeyboardInterrupt:
+        interrupted = True
+        rc = 130
 
     failures, probing = classify(str(trace), bound, tmpfs, here, os.environ.get("PATH", ""))
     mark_exists(failures)
@@ -479,7 +484,9 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     summary_path.write_text(summary + "\n")
 
     print()
-    if rc != 0:
+    if interrupted:
+        print(f"[discovery] Interrupted; partial trace analyzed.")
+    elif rc != 0:
         print(f"[discovery] '{target}' exited with code {rc}.")
     else:
         print(f"[discovery] '{target}' exited cleanly.")
@@ -494,14 +501,15 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
 def _run_strace(trace_path: Path, bwrap_argv: list[str],
                 pass_fds: tuple[int, ...]) -> int:
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["strace", "-f", "-e", "trace=%file", "-o", str(trace_path),
              "bwrap", *bwrap_argv],
             pass_fds=pass_fds,
         )
-    except subprocess.CalledProcessError as e:
-        return e.returncode
-    return 0
+    except OSError as e:
+        print(f"Error: failed to run strace: {e}", file=sys.stderr)
+        return 127
+    return proc.returncode
 
 
 def _write_failures(failures: list[dict], path: Path) -> None:
