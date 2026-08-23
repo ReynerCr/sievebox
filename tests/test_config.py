@@ -523,6 +523,15 @@ def test_setenv_declarations_beat_host_env(tmp_path):
     assert got["FOO"] == "declared"
 
 
+def test_setenv_empty_string_is_emitted(tmp_path):
+    # a declared "" exports an empty variable, shell-faithful; an unset-var
+    # declaration still gates out entirely
+    got = _compose_setenv(
+        tmp_path, module={"EMPTY": "", "DROPPED": "$TOTALLY_UNSET/x"}, env={})
+    assert got["EMPTY"] == ""
+    assert "DROPPED" not in got
+
+
 def test_setenv_bare_forwards_host(tmp_path):
     got = _compose_setenv(tmp_path, module={"FOO": None}, env={"FOO": "host"})
     assert got["FOO"] == "host"
