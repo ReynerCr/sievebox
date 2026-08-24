@@ -4,16 +4,22 @@
 # completion.  Called from _sievebox_complete below.
 #   $1  flag prefix e.g. --relax=
 #   $2  sievebox __complete subcommand e.g. "relax"
-#   $3  the other flag prefix e.g. --module= (prevents overlap)
+#   $3+ any other value-flag prefixes, completion bails when the text
+#       after our last occurrence contains one of them
 _sievebox_complete_value() {
-    local flag="$1" cmd="$2" other="$3"
+    local flag="$1" cmd="$2"
+    shift 2
+    local others=("$@")
     if [[ $prefix != *"$flag"* ]]; then
         return 1
     fi
     local suffix="${prefix##*"$flag"}"
-    if [[ $suffix == *"$other"* ]]; then
-        return 1
-    fi
+    local other
+    for other in "${others[@]}"; do
+        if [[ $other != "$flag" && $suffix == *"$other"* ]]; then
+            return 1
+        fi
+    done
     local value="$suffix"
     local last="${value##*,}"
     local head=""
@@ -35,6 +41,7 @@ _sievebox_complete_value() {
 
 _sievebox_complete() {
     local cur prefix
+    local VALUE_FLAGS=("--relax=" "--module=" "--socket=" "--device=")
 
     # _init_completion re-parses COMP_LINE without = as a word break,
     # so --relax=filesystem stays as one word.  Available when
@@ -50,14 +57,20 @@ _sievebox_complete() {
 
     # --relax=<value>, --module=<value>, --socket=<value>, --device=<value>
     # (comma-separated)
-    _sievebox_complete_value "--relax=" "relax" "--module=" && return
-    _sievebox_complete_value "--module=" "modules" "--relax=" && return
-    _sievebox_complete_value "--socket=" "sockets" "--device=" && return
-    _sievebox_complete_value "--device=" "devices" "--socket=" && return
+    _sievebox_complete_value "--relax=" "relax" "${VALUE_FLAGS[@]}" && return
+    _sievebox_complete_value "--module=" "modules" "${VALUE_FLAGS[@]}" && return
+    _sievebox_complete_value "--socket=" "sockets" "${VALUE_FLAGS[@]}" && return
+    _sievebox_complete_value "--device=" "devices" "${VALUE_FLAGS[@]}" && return
 
-    # Flag names
+    # Flag names. --json only means something next to --status, so drop it
+    # when the prefix has no --status yet.
     if [[ $cur == -* ]]; then
-        COMPREPLY=($(compgen -W "$(sievebox __complete flags 2>/dev/null)" -- "$cur"))
+        local comps
+        comps=$(sievebox __complete flags 2>/dev/null)
+        if [[ $prefix != *--status* ]]; then
+            comps=${comps//--json/}
+        fi
+        COMPREPLY=($(compgen -W "$comps" -- "$cur"))
         if [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]]; then
             compopt -o nospace 2>/dev/null
         fi
@@ -66,5 +79,6 @@ _sievebox_complete() {
 
     # App names
     COMPREPLY=($(compgen -W "$(sievebox __complete apps 2>/dev/null)" -- "$cur"))
-} &&
+}
+
 complete -F _sievebox_complete sievebox

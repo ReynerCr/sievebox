@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import shlex
@@ -15,7 +16,7 @@ from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
 from . import fdargs as fdargs_mod
 from .bwrap import arity, category
-from .config import DEFAULT_COLOR, Config, ConfigError, Module, find_app, find_config_files, flatten_modules, load_config
+from .config import DEFAULT_COLOR, ConfigError, Module, find_app, find_config_files, flatten_modules, load_config
 
 if TYPE_CHECKING:
     from .compose import Composition
@@ -25,13 +26,14 @@ USAGE = """\
 Usage: sievebox [options] <binary> [args...]
 
 Runs <binary> in a bubblewrap sandbox using its registered profile. Options are
-recognized only BEFORE <binary>; everything after is passed verbatim to it.
+recognized only BEFORE <binary>. Everything after is passed verbatim to it.
 
 Options:
   -h, --help              Show this help and exit
   -l, --list [binary...]  List modules for the given binaries (-v: + permissions);
                           with no binary, list all registered binaries
       --status            Show the resolved sandbox config for <binary>
+      --json              Machine-readable output for --status
       --dry-run           Print the composed command without running it
       --discover          Run <binary> under strace to find missing permissions
   -p, --prompt            Offer to create missing optional bind directories
@@ -47,6 +49,25 @@ Options:
 """
 
 VALID_RELAX = {"bwrap", "all", "filesystem", "ro-filesystem"}
+
+# Flag set for bash completion (includes all completable forms).
+_COMPLETE_FLAGS = [
+    "--help", "--list", "--status", "--dry-run", "--discover",
+    "--prompt", "--verbose", "--relax=", "--module=", "--socket=",
+    "--device=", "--raw", "--json",
+    "-h", "-l", "-p", "-v",
+]
+
+# value-taking list flags: prefix -> (ParsedArgs attr, singular label)
+_LIST_FLAGS: dict[str, tuple[str, str]] = {
+    "--module=": ("inject_modules", "module name"),
+    "--socket=": ("grant_sockets", "socket name"),
+    "--device=": ("grant_devices", "device name"),
+}
+
+# Parser-level errors exit 2, runtime/config errors exit 1.
+EXIT_USAGE = 2
+EXIT_ERROR = 1
 
 
 def _color(code: str) -> str:
@@ -70,11 +91,17 @@ def _err(msg: str) -> None:
     print(f"Error: {msg}", file=sys.stderr)
 
 
-def _validate_mode(current: str, new: str) -> str:
-    if current != "run" and current != new:
-        _err(f"--{current} and --{new} are mutually exclusive")
-        sys.exit(1)
-    return new
+def _warn(msg: str) -> None:
+    print(f"Warning: {msg}", file=sys.stderr)
+
+
+def _set_mode(args: ParsedArgs, new: str) -> int | None:
+    """Set the invocation mode; exit code when two modes collide."""
+    if args.mode != "run" and args.mode != new:
+        _err(f"--{args.mode} and --{new} are mutually exclusive")
+        return EXIT_USAGE
+    args.mode = new
+    return None
 
 
 @dataclass
@@ -93,7 +120,7 @@ class ParsedArgs:
 def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
     """Parse sievebox CLI options. Returns (args, 0) on success, (None, code) on early exit."""
     args = ParsedArgs()
-    if os.environ.get("SIEVEBOX_PROMPT", "false") == "true":
+    if os.environ.get("SIEVEBOX_PROMPT", "").lower() in ("1", "true", "yes"):
         args.prompt = True
     i = 0
     while i < len(argv):
@@ -102,13 +129,21 @@ def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
             print(USAGE)
             return None, 0
         elif a in ("-l", "--list"):
-            args.mode = _validate_mode(args.mode, "list")
+            err = _set_mode(args, "list")
+            if err is not None:
+                return None, err
         elif a == "--status":
-            args.mode = _validate_mode(args.mode, "status")
+            err = _set_mode(args, "status")
+            if err is not None:
+                return None, err
         elif a == "--discover":
-            args.mode = _validate_mode(args.mode, "discover")
+            err = _set_mode(args, "discover")
+            if err is not None:
+                return None, err
         elif a == "--dry-run":
-            args.mode = _validate_mode(args.mode, "dryrun")
+            err = _set_mode(args, "dryrun")
+            if err is not None:
+                return None, err
         elif a in ("-p", "--prompt"):
             args.prompt = True
         elif a in ("-v", "--verbose"):
@@ -122,47 +157,49 @@ def _parse_args(argv: list[str]) -> tuple[ParsedArgs | None, int]:
                 val = val.strip()
                 if val not in VALID_RELAX:
                     _err(f"invalid --relax value '{val}' (valid: {', '.join(sorted(VALID_RELAX))})")
-                    return None, 2
+                    return None, EXIT_USAGE
                 args.relaxed.add(val)
-        elif a.startswith("--module="):
-            vals = [v.strip() for v in a[len("--module="):].split(",")]
-            if not any(vals):
-                _err("--module= requires at least one module name")
-                return None, 2
-            args.inject_modules.extend(vals)
-        elif a.startswith("--socket="):
-            vals = [v.strip() for v in a[len("--socket="):].split(",")]
-            if not any(vals):
-                _err("--socket= requires at least one socket name")
-                return None, 2
-            args.grant_sockets.extend(vals)
-        elif a.startswith("--device="):
-            vals = [v.strip() for v in a[len("--device="):].split(",")]
-            if not any(vals):
-                _err("--device= requires at least one device name")
-                return None, 2
-            args.grant_devices.extend(vals)
-        elif a == "--":
-            args.positional = argv[i + 1:]
-            break
-        elif a.startswith("-"):
-            _err(f"unknown option '{a}'")
-            print(USAGE, file=sys.stderr)
-            return None, 2
         else:
-            args.positional = argv[i:]
-            break
+            list_flag = next((p for p in _LIST_FLAGS if a.startswith(p)), None)
+            if list_flag:
+                attr, label = _LIST_FLAGS[list_flag]
+                vals = [v.strip() for v in a[len(list_flag):].split(",")]
+                if not any(vals):
+                    _err(f"{list_flag} requires at least one {label}")
+                    return None, EXIT_USAGE
+                getattr(args, attr).extend(vals)
+            elif a == "--":
+                args.positional = argv[i + 1:]
+                break
+            elif a.startswith("-"):
+                _err(f"unknown option '{a}'")
+                names = [f.lstrip("-") for f in _COMPLETE_FLAGS]
+                close = difflib.get_close_matches(a.lstrip("-"), names, n=1)
+                if close:
+                    print(f"Did you mean '--{close[0]}'?", file=sys.stderr)
+                print(USAGE, file=sys.stderr)
+                return None, EXIT_USAGE
+            else:
+                args.positional = argv[i:]
+                break
         i += 1
+
+    if {"filesystem", "ro-filesystem"} <= args.relaxed:
+        _err("--relax=filesystem and --relax=ro-filesystem are mutually exclusive.")
+        return None, EXIT_USAGE
+    if len(args.relaxed) > 1 and ("all" in args.relaxed or "bwrap" in args.relaxed):
+        broadest = "all" if "all" in args.relaxed else "bwrap"
+        _err(f"--relax={broadest} already removes the sandbox measures. "
+             f"Drop the other --relax values.")
+        return None, EXIT_USAGE
+
+    if args.json and args.mode != "status":
+        _err("--json requires --status.")
+        return None, EXIT_USAGE
+
     return args, 0
 
 
-# Flag set for bash completion (includes all completable forms).
-_COMPLETE_FLAGS = [
-    "--help", "--list", "--status", "--dry-run", "--discover",
-    "--prompt", "--verbose", "--relax=", "--module=", "--socket=",
-    "--device=", "--raw", "--json",
-    "-h", "-l", "-p", "-v",
-]
 
 
 def _handle_complete(args: list[str]) -> int:
@@ -231,6 +268,29 @@ def _register_runtime_grants(cfg: Config, sockets: list[str],
     return names
 
 
+def _validate_known(names: list[str], known: set[str], flag: str,
+                    label: str) -> int | None:
+    """Exit code when any name is outside `known`, else None."""
+    for value in names:
+        if value not in known:
+            _err(f"unknown {label} '{value}' in {flag} "
+                 f"(valid: {', '.join(sorted(known))})")
+            return EXIT_ERROR
+    return None
+
+
+def _validate_invocation(args: ParsedArgs) -> int | None:
+    """Cross-flag checks that need no config. Returns an exit code or None."""
+    if args.mode == "list":
+        offending = [flag for flag, (attr, _) in _LIST_FLAGS.items()
+                     if getattr(args, attr)]
+        if offending:
+            _err(f"--list documents profile state and cannot be combined "
+                 f"with {', '.join(offending)}")
+            return EXIT_USAGE
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -252,44 +312,41 @@ def main(argv: list[str] | None = None) -> int:
     if args is None:
         return rc
 
-    if args.mode == "list" and (args.inject_modules or args.grant_sockets
-                                or args.grant_devices):
-        _err("--list documents profile state and cannot be combined with "
-             "--module=, --socket=, or --device=")
-        return 2
+    err = _validate_invocation(args)
+    if err is not None:
+        return err
 
     try:
         cfg = load_config(find_config_files(_config_search_dir()))
     except ConfigError as e:
         _err(str(e))
-        return 1
+        return EXIT_ERROR
 
     if args.mode == "list":
         return _handle_list(cfg, args.positional, args.verbose)
 
     if not args.positional:
-        print(USAGE, file=sys.stderr)
-        return 1
+        if args.mode == "run":
+            print(USAGE, file=sys.stderr)
+            return EXIT_ERROR
+        _err(f"--{args.mode.replace('dryrun', 'dry-run')} requires a binary to act on.")
+        print("       Run 'sievebox --list' to see registered binaries.", file=sys.stderr)
+        return EXIT_USAGE
     target = os.path.basename(args.positional[0])
 
     if find_app(cfg, target) is None:
         _err(f"'{target}' is not registered in any profile.")
         print("       Run 'sievebox --list' to see registered binaries.", file=sys.stderr)
-        return 1
+        return EXIT_ERROR
 
-    for mod in args.inject_modules:
-        if mod not in cfg.modules:
-            _err(f"unknown module '{mod}' in --module= (run 'sievebox --list' for available modules)")
-            return 1
-
-    for sock in args.grant_sockets:
-        if sock not in capabilities.KNOWN_SOCKETS:
-            _err(f"unknown socket '{sock}' in --socket= (valid: {', '.join(sorted(capabilities.KNOWN_SOCKETS))})")
-            return 1
-    for dev in args.grant_devices:
-        if dev not in capabilities.KNOWN_DEVICES:
-            _err(f"unknown device '{dev}' in --device= (valid: {', '.join(sorted(capabilities.KNOWN_DEVICES))})")
-            return 1
+    for values, known, flag, label in (
+            (args.inject_modules, set(cfg.modules), "--module=", "module"),
+            (args.grant_sockets, capabilities.KNOWN_SOCKETS, "--socket=", "socket"),
+            (args.grant_devices, capabilities.KNOWN_DEVICES, "--device=", "device"),
+    ):
+        err = _validate_known(values, known, flag, label)
+        if err is not None:
+            return err
 
     args.inject_modules += _register_runtime_grants(
         cfg, args.grant_sockets, args.grant_devices)
@@ -302,22 +359,24 @@ def main(argv: list[str] | None = None) -> int:
                                    inject_modules=args.inject_modules)
     except ConfigError as e:
         _err(str(e))
-        return 1
+        return EXIT_ERROR
 
     if args.mode == "status":
         if args.json:
             return _handle_status_json(cfg, target, comp, args.relaxed)
         return _handle_status(cfg, target, comp, args.relaxed)
 
+    return _cmd_sandboxed(args, cfg, comp, target, home)
+
+
+def _cmd_sandboxed(args: ParsedArgs, cfg: Config, comp: Composition,
+                   target: str, home: str) -> int:
+    """Run/dry-run/discover tails: assemble the invocation and dispatch."""
     bwrap_off = "bwrap" in args.relaxed or "all" in args.relaxed
 
-    if "filesystem" in args.relaxed and "ro-filesystem" in args.relaxed:
-        _err("--relax=filesystem and --relax=ro-filesystem are mutually exclusive.")
-        return 2
-
     if args.mode == "discover" and bwrap_off:
-        _err("--discover requires the sandbox; cannot use with --relax=bwrap or --raw.")
-        return 1
+        _err("--discover requires the sandbox. It cannot be combined with --relax=bwrap or --raw.")
+        return EXIT_ERROR
 
     # run / dryrun / discover share composition + invocation assembly
     if bwrap_off and args.mode == "dryrun":
@@ -326,24 +385,29 @@ def main(argv: list[str] | None = None) -> int:
 
     if not bwrap_off and comp.home_violation and args.mode in ("run", "discover"):
         _err("Cannot run from $HOME. Change to a project-specific directory and rerun.")
-        return 1
+        return EXIT_ERROR
     if not shutil.which(target):
-        print(f"Warning: '{target}' not found on PATH; execution may fail.", file=sys.stderr)
+        _warn(f"'{target}' not found on PATH, execution may fail.")
     _emit_warnings(comp)
     if args.mode in ("run", "discover") and not bwrap_off and not shutil.which("bwrap"):
         _err("bubblewrap ('bwrap') not found on PATH; install it to run sandboxes.")
-        return 1
+        return EXIT_ERROR
 
     if bwrap_off:
-        os.execvp(target, args.positional)
+        try:
+            os.execvp(target, args.positional)
+        except OSError as e:
+            _err(f"cannot execute '{target}': {e}")
+            return 127
 
     script = exec_mod.build_exec_cmd(comp.color, comp.shell_inits)
-    # arg0 = target basename (drives the conda check); the full positional
+    # arg0 = target basename (drives the conda check). The full positional
     # (binary as typed + its args) becomes "$@", which the script exec's.
     # --remount-ro / would undo --relax=filesystem's rw bind.
     fs_relaxed = "filesystem" in args.relaxed
     remount = [] if fs_relaxed else ["--remount-ro", "/"]
-    invocation = comp.bwrap_args + remount + ["bash", "-c", script, target, *args.positional]
+    tail = ["bash", "-c", script, target, *args.positional]
+    invocation = comp.bwrap_args + remount + tail
 
     if args.mode == "dryrun":
         lines = [" ".join(_quote(t) for t in grp) for grp in _dryrun_lines(invocation)]
@@ -356,10 +420,10 @@ def main(argv: list[str] | None = None) -> int:
             os.path.join(os.environ.get("XDG_STATE_HOME", home + "/.local/state"), "sievebox"),
         )
         fd = fdargs_mod.write_args_fd(comp.bwrap_args + remount)
-        bwrap_argv = ["--args", str(fd), "bash", "-c", script, target, *args.positional]
+        bwrap_argv = ["--args", str(fd)] + tail
         rc = discovery_mod.run_discovery(
             cfg, target, bwrap_argv, comp.bwrap_args + remount, (fd,),
-            here, home, state_dir,
+            comp.here, home, state_dir,
             comp.effective_modules,
         )
         os.close(fd)
@@ -369,7 +433,11 @@ def main(argv: list[str] | None = None) -> int:
         _prompt_create(comp.bwrap_args)
     _banner(comp, target)
     fd = fdargs_mod.write_args_fd(comp.bwrap_args + remount)
-    os.execvp("bwrap", ["bwrap", "--args", str(fd), "bash", "-c", script, target, *args.positional])
+    try:
+        os.execvp("bwrap", ["bwrap", "--args", str(fd)] + tail)
+    except OSError as e:
+        _err(f"cannot execute bwrap: {e}")
+        return 127
 
 
 def _quote(tok: str) -> str:
