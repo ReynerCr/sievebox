@@ -12,7 +12,7 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from sievebox.cli import main
+from sievebox.cli import _parse_args, main
 
 
 def _write(path: Path, data: dict) -> Path:
@@ -65,8 +65,8 @@ def test_raw_equals_relax_all(monkeypatch, tmp_path):
     assert out1 == out2
     assert "bwrap" not in out1
     assert out1.strip() == "npm"
-    # comma lists work too
-    rc3, out3, _ = _run(["--relax=bwrap,all", "--dry-run", "npm"],
+    # comma lists work, duplicates collapse
+    rc3, out3, _ = _run(["--relax=bwrap,bwrap", "--dry-run", "npm"],
                         monkeypatch, tmp_path)
     assert rc3 == 0 and out3.strip() == "npm"
 
@@ -208,6 +208,30 @@ def test_list_rejects_runtime_flags(monkeypatch, tmp_path, grant_flag, value):
     assert "--list" in err and grant_flag in err
 
 
+def test_json_requires_status(monkeypatch, tmp_path):
+    rc, out, err = _run(["--json", "--dry-run", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "--json requires --status" in err
+    rc, out, err = _run(["--status", "--json", "npm"], monkeypatch, tmp_path)
+    assert rc == 0
+
+
+def test_relax_broad_value_conflicts(tmp_path, monkeypatch):
+    # all and (for now) bwrap subsume every other measure,
+    # combining them is should error
+    for argv in (["--relax=all", "--relax=filesystem", "npm"],
+                 ["--relax=bwrap,ro-filesystem", "npm"]):
+        rc, out, err = _run(argv, monkeypatch, tmp_path)
+        assert rc == 2
+        assert "already removes the sandbox measures" in err
+
+
+def test_unknown_option_suggests_close_match(monkeypatch, tmp_path):
+    rc, out, err = _run(["--satus", "npm"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "Did you mean '--status'?" in err
+
+
 @pytest.mark.parametrize("grant_flag,name,rc,fragment", [
     ("--socket=", "bogus", 1, "unknown socket 'bogus'"),
     ("--device=", "bogus", 1, "unknown device 'bogus'"),
@@ -291,6 +315,40 @@ def test_status_json_validates_structure(monkeypatch, tmp_path):
 
 
 # --- engine warnings ---
+
+def test_mode_without_binary_errors(monkeypatch, tmp_path):
+    for flag in ("--status", "--dry-run", "--discover"):
+        rc, out, err = _run([flag], monkeypatch, tmp_path)
+        assert rc == 2
+        assert f"{flag} requires a binary" in err
+    # bare invocation keeps the help behavior
+    rc, out, err = _run([], monkeypatch, tmp_path)
+    assert rc == 1
+    assert "Usage:" in out + err
+
+
+def test_discover_reaches_orchestrator(monkeypatch, tmp_path):
+    # test for regression: _cmd_sandboxed must pass cfg down to run_discovery
+    import sievebox.discovery as discovery_mod
+    calls = []
+    monkeypatch.setattr(discovery_mod, "run_discovery", lambda *a, **k: calls.append(a) or 0)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/x")
+    rc, out, err = _run(["--discover", "npm"], monkeypatch, tmp_path)
+    assert rc == 0 and calls
+
+
+def test_mode_conflict_exits_usage(monkeypatch, tmp_path):
+    rc, out, err = _run(["--list", "--status"], monkeypatch, tmp_path)
+    assert rc == 2
+    assert "mutually exclusive" in err
+
+
+def test_sievebox_prompt_env_truthy(monkeypatch, tmp_path):
+    for value in ("1", "true", "YES"):
+        monkeypatch.setenv("SIEVEBOX_PROMPT", value)
+        args, rc = _parse_args(["npm"])
+        assert args.prompt is True, value
+
 
 def test_warning_emitted_on_stderr_before_dryrun(monkeypatch, tmp_path):
     cfg = _write(tmp_path / "sievebox-profiles.yaml", {
