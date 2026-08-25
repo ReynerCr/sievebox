@@ -54,3 +54,15 @@ def arity(flag: str) -> int:
 def category(flag: str) -> str:
     """Category of a directive. Unknown flags return 'flag' (standalone)."""
     return DIRECTIVES.get(flag, (1, "flag"))[1]
+
+
+def iter_directives(bwrap_args: list[str]) -> list[tuple[str, list[str]]]:
+    """Return (flag, operands) tuples from a flat bwrap argument vector."""
+    out: list[tuple[str, list[str]]] = []
+    i = 0
+    while i < len(bwrap_args):
+        flag = bwrap_args[i]
+        n = arity(flag)
+        out.append((flag, bwrap_args[i + 1 : i + n]))
+        i += n
+    return out

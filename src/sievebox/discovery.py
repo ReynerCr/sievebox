@@ -11,7 +11,7 @@ from pathlib import Path
 from shutil import which
 from typing import TYPE_CHECKING
 
-from .bwrap import arity, category
+from .bwrap import arity, category, iter_directives
 
 if TYPE_CHECKING:
     from .config import Config
@@ -58,18 +58,6 @@ _AUTO_DETECT = os.environ.get("SIEVEBOX_AUTO_DETECT", "true") == "true"
 
 
 # --- Bwrap arg vector parsing ------------------------------------------------
-
-def iter_directives(bwrap_args: list[str]) -> list[tuple[str, list[str]]]:
-    """Yield (flag, operands) tuples from a flat bwrap argument vector."""
-    out: list[tuple[str, list[str]]] = []
-    i = 0
-    while i < len(bwrap_args):
-        flag = bwrap_args[i]
-        n = arity(flag)
-        out.append((flag, bwrap_args[i + 1 : i + n]))
-        i += n
-    return out
-
 
 def extract_bound_paths(bwrap_args: list[str]) -> set[str]:
     """Dest paths populated from host: binds, symlinks, /dev, /proc.

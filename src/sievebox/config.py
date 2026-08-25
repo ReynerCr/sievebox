@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from .capabilities import KNOWN_DEVICES, KNOWN_SOCKETS
+from .capabilities import GRANT_PREFIX, KNOWN_DEVICES, KNOWN_SOCKETS
 
 DEFAULT_CONFIG_NAME = "sievebox-profiles.yaml"
 
@@ -491,7 +491,7 @@ def _validate_app(a: App, label: str, cfg: Config, errs: list[str]) -> None:
 def _validate(cfg: Config) -> None:
     errs: list[str] = []
     for m in cfg.modules.values():
-        if m.name.startswith("__"):
+        if m.name.startswith(GRANT_PREFIX):
             errs.append(f"module names starting with '__' are reserved for "
                         f"runtime grants: '{m.name}'")
         for base in m.extends:

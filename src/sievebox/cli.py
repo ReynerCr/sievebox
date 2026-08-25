@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING
 from . import capabilities, compose as compose_mod, exec_cmd as exec_mod
 from . import discovery as discovery_mod
 from . import fdargs as fdargs_mod
-from .bwrap import arity, category
+from .bwrap import category, iter_directives
+from .capabilities import GRANT_PREFIX
 from .config import DEFAULT_COLOR, ConfigError, Module, find_app, find_config_files, flatten_modules, load_config
 
 if TYPE_CHECKING:
@@ -258,11 +259,11 @@ def _register_runtime_grants(cfg: Config, sockets: list[str],
     """
     names: list[str] = []
     for sock in sockets:
-        name = f"__socket_{sock}"
+        name = f"{GRANT_PREFIX}socket_{sock}"
         cfg.modules[name] = Module(name=name, sockets=[sock])
         names.append(name)
     for dev in devices:
-        name = f"__device_{dev}"
+        name = f"{GRANT_PREFIX}device_{dev}"
         cfg.modules[name] = Module(name=name, devices=[dev])
         names.append(name)
     return names
@@ -459,18 +460,14 @@ def _grouped(args: list[str]) -> dict[str, list[str]]:
     ro: list[str] = []
     rw: list[str] = []
     dev: list[str] = []
-    i = 0
-    while i < len(args):
-        f = args[i]
-        n = arity(f)
-        cat = category(f)
+    for flag, ops in iter_directives(args):
+        cat = category(flag)
         if cat == "bind_ro":
-            ro.append(args[i + 2])
+            ro.append(ops[-1])
         elif cat == "bind_rw":
-            rw.append(args[i + 2])
+            rw.append(ops[-1])
         elif cat == "bind_dev":
-            dev.append(args[i + 2])
-        i += n
+            dev.append(ops[-1])
     return {"rw": rw, "ro": ro, "dev": dev}
 
 
@@ -583,12 +580,9 @@ def _handle_status_json(cfg: Config, target: str, comp: Composition,
 
 
 def _prompt_create(bwrap_args: list[str]) -> None:
-    i = 0
-    while i < len(bwrap_args):
-        f = bwrap_args[i]
-        n = arity(f)
-        if category(f) in ("bind_rw", "bind_ro", "bind_dev") and f.endswith("-try"):
-            src = bwrap_args[i + 1]
+    for flag, ops in iter_directives(bwrap_args):
+        if category(flag) in ("bind_rw", "bind_ro", "bind_dev") and flag.endswith("-try"):
+            src = ops[0]
             if not os.path.exists(src):
                 ans = input(f"Missing bind source: {src}\n  [c]reate as directory / [s]kip (default skip)? ")
                 if ans.strip().lower() == "c":
@@ -597,7 +591,6 @@ def _prompt_create(bwrap_args: list[str]) -> None:
                         print(f"  created directory: {src}", file=sys.stderr)
                     except OSError as e:
                         print(f"  failed to create: {src} ({e})", file=sys.stderr)
-        i += n
 
 
 def _emit_warnings(comp: Composition) -> None:

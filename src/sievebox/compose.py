@@ -65,16 +65,17 @@ def _compose_warnings(eff: list[str], cfg: Config, env: dict,
             )
     # only runtime grants warn here, profile-declared gating is status's job
     for name in eff:
-        if name.startswith("__socket_"):
-            sock = name.removeprefix("__socket_")
-            if sock not in sockets_granted:
+        if not name.startswith(capabilities.GRANT_PREFIX):
+            continue
+        kind, _, value = name.removeprefix(capabilities.GRANT_PREFIX).partition("_")
+        if kind == "socket":
+            if value not in sockets_granted:
                 out.append(
-                    f"--socket={sock}: session vars missing, socket not granted.")
-        elif name.startswith("__device_"):
-            dev = name.removeprefix("__device_")
-            if not any(os.path.exists(n) for n in capabilities.device_nodes(dev)):
+                    f"--socket={value}: session vars missing, socket not granted.")
+        elif kind == "device":
+            if not any(os.path.exists(n) for n in capabilities.device_nodes(value)):
                 out.append(
-                    f"--device={dev}: not granted, no matching /dev node "
+                    f"--device={value}: not granted, no matching /dev node "
                     f"exists on the host.")
     return out
 

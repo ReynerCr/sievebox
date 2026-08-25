@@ -16,12 +16,15 @@ _VAR = re.compile(r"\$(\w+)|\$\{(\w+)\}")
 # Known device names under /dev that modules can request.
 KNOWN_DEVICES: set[str] = {"dri", "snd", "video", "input", "tty", "console", "kvm"}
 
+# Name prefix reserved for runtime-grant modules.
+GRANT_PREFIX = "__"
+
 # socket name -> (mode, path template); each path gates on its own $VARs.
 # WAYLAND_DISPLAY is special: the protocol allows an absolute socket path,
 # in which case it is used directly instead of under $XDG_RUNTIME_DIR.
 _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
     "wayland": [("ro", "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY")],
-    # Direct host X11 access: weakens security, opt-in only (the 'x11-dangerous' module).
+    # Direct host X11 access weakens security: opt-in only.
     "x11": [
         ("ro", "/tmp/.X11-unix"),
         ("ro", "$XAUTHORITY"),
@@ -155,7 +158,6 @@ def module_holdings(module: Module) -> list[tuple[str, str]]:
 
     for sock in module.sockets:
         for mode, key in SOCKET_IMPLIES.get(sock, []):
-            add(mode, key)
             add(mode, key)
     for key in module.claims:
         add("exclusive", key)
