@@ -609,6 +609,11 @@ def test_granted_sockets_post_gating(tmp_path, sockets, env, expected):
 # --- capability-aware network detection ---
 
 def test_network_detection(tmp_path):
+    from sievebox.bwrap import category
+
+    # --share-net is registry-known: detection parses directives structurally,
+    # it does not substring-match raw_args text
+    assert category("--share-net") == "network"
     base = _write(tmp_path / "net.yaml", {
         "modules": {"inet": {"raw_args": [["--share-net"]]}},
         "apps": {"app": {"modules": ["inet"]}},

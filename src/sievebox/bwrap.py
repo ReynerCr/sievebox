@@ -27,6 +27,7 @@ DIRECTIVES: dict[str, tuple[int, str]] = {
     "--ro-bind-data":  (3, "data"),
     "--hostname":      (2, "meta"),
     "--remount-ro":    (2, "meta"),
+    "--share-net":     (1, "network"),
     "--chdir":         (2, "meta"),
     "--uid":           (2, "meta"),
     "--gid":           (2, "meta"),
