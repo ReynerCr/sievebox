@@ -1,8 +1,7 @@
 # Architecture
 
-File intended for someone reading the code or extending the engine. The codebase
-should be small enough to read end-to-end; this helps map the modules and
-their relationships.
+File intended for someone reading the code or extending the engine. This document
+helps map the modules and their relationships.
 
 ## Source layout
 
@@ -35,7 +34,7 @@ expansion with unset-var gating. `module_holdings` merges a module's explicit
 combinations where several effective modules hold one key and any holder is
 exclusive (readers-writer: consumers of a resource stack, providers do not).
 `granted_sockets`/`granted_devices` aggregate a module list into what the
-host actually granted (env-gated sockets, existence-gated devices).
+host actually granted (env-gated sockets, host-node-gated devices).
 This is where future capabilities (rlimits, seccomp) would live. `config.py`
 imports the socket and device sets for validation, so adding a socket here
 automatically makes it valid in profiles.
@@ -53,18 +52,22 @@ argument vector: core args (with filesystem-relaxed variants), module
 capability binds (sockets resolve against the compose env), `raw_args`,
 setenv forwarding, and the `$HERE` mount. Returns a `Composition` with the
 args plus derived metadata: effective modules, color, granted sockets and
-devices, network (any effective module passing `--share-net`), home
-violation. This is the bridge between the config model and the actual bwrap
-invocation.
+devices, network (any effective module carrying a directive of the
+`network` category, per the bwrap registry), home violation. This is the
+bridge between the config model and the actual bwrap invocation.
 
 **`cli.py`**: Parses command-line flags (`--relax`, `--module`, `--socket`,
-`--device`, `--dry-run`, `--discover`, `--list`, `--status`), loads config,
-and dispatches to the appropriate mode. Runtime grants (`--socket=`,
-`--device=`) are materialized here as synthetic `__`-prefixed modules
-registered into the config, so composition treats them like any other
-module. Handles the `--relax=bwrap`/`--raw` fast path (direct exec, no
-sandbox). Builds the final bwrap invocation and either prints it
-(`--dry-run`), traces it (`--discover`), or execs it.
+`--device`, `--json`, `--prompt`, `--raw`, `--verbose`, `--dry-run`,
+`--discover`, `--list`, `--status`) through a table-driven parser, validates
+the invocation (mode conflicts, relax combinations, grant names) before any
+composition runs, loads config, and dispatches to the appropriate mode
+(`main` for dispatch plus `_cmd_sandboxed` for the run/dry-run/discover
+tail). Runtime grants (`--socket=`, `--device=`) are materialized here as
+synthetic `GRANT_PREFIX`-prefixed modules registered into the config, so
+composition treats them like any other module. Usage errors exit 2,
+runtime/config errors exit 1. Handles the `--relax=bwrap`/`--raw` fast path
+(direct exec, no sandbox). Builds the final bwrap invocation and either
+prints it (`--dry-run`), traces it (`--discover`), or execs it.
 
 **`exec_cmd.py`**: Generates the bash script that runs inside the sandbox
 (bwrap's `bash -c` argument). Fuses per-module `shell_init` snippets and sets
@@ -98,11 +101,12 @@ SYS, etc.), and produces a classified summary. Uses
 
 - **`core:` is first-wins.** The security floor cannot be relaxed from a
   user drop-in. Only the first file that defines `core:` sets it.
-- **Network is a module, not a core toggle.** `--share-net` and cert binds
-  live in the `network` module's `raw_args`. Network bundles a capability
-  with its supporting filesystem binds, and the module is the unit that
-  bundles both, so it is granted via `--module=network` rather than a
-  dedicated flag.
+- **Network is a module, not a core toggle.** `--share-net` is a registered
+  bwrap directive (its own category in `bwrap.py`), and network detection
+  scans effective modules' directives structurally. The `network` module
+  bundles the capability with its supporting cert binds, and the module is
+  the unit that bundles both, so it is granted via `--module=network`
+  rather than a dedicated flag.
 - **`raw_args` on modules.** Arbitrary bwrap directives (e.g. `--share-net`,
   `--symlink`) that aren't filesystem binds or sockets. Appended after core
   args in effective module order.
@@ -110,23 +114,23 @@ SYS, etc.), and produces a classified summary. Uses
   first, then glob patterns in declaration order. Comma-separated keys expand
   at load time; glob keys match at lookup time.
 - **Runtime grants are synthetic modules.** `--socket=` and `--device=`
-  materialize `__`-prefixed modules (registered into the config before
-  composition) instead of threading separate grant state through compose.
-  Everything downstream (flattening, conflicts, status) sees them as ordinary
-  modules. The `__` name prefix is reserved and rejected in user profiles so
-  synthetic names can never collide.
+  materialize `GRANT_PREFIX`-prefixed modules (registered into the config
+  before composition) instead of threading separate grant state through
+  compose. Everything downstream (flattening, holdings conflicts, status)
+  sees them as ordinary modules. The prefix is reserved and rejected in user
+  profiles so synthetic names can never collide.
 
 ## Tests
 
 - `tests/test_config.py`: config loading, merge semantics, comma/glob keys,
-  raw_args, validation.
-- `tests/test_cli.py`: CLI flags, `--relax` modes, `--module` injection,
-  dry-run output.
-- `tests/test_discovery.py`: golden-file tests for the strace classifier,
-  project detection.
-
-## Known debt
-
-- **`discovery.py`** is the largest module. A split into bwrap parsing, strace
-  classifier, summary builder, and orchestrator is deferred until discovery
-  grows bigger.
+  raw_args, claims, setenv precedence, compose warnings, validation.
+- `tests/test_cli.py`: CLI flags, `--relax` modes, runtime grants,
+  usage-error contracts (exit codes, suggestions), status output.
+- `tests/test_discovery.py`: golden-file tests for the strace classifier and
+  summary; interrupt handling.
+- `tests/test_capabilities.py`: socket/device resolution, holdings,
+  bind dedup.
+- `tests/test_completion.py`, `tests/test_fdargs.py`: bash completion
+  contexts and the memfd arg writer.
+- `tests/validation/` + `tests/golden/`: fixture configs and their expected
+  outputs.

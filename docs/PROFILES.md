@@ -1,7 +1,7 @@
 # Profiles & configuration
 
 Reference for loading, merging, and authoring sievebox profiles. For engine
-internals see [`ARCHITECTURE.md`](ARCHITECTURE.md); for usage and flags see
+internals see [`ARCHITECTURE.md`](ARCHITECTURE.md). For usage and flags see
 the root [`README.md`](../README.md).
 
 ## Config loading
@@ -54,8 +54,9 @@ modules:
       ro: [~/.mytoolrc]
 ```
 
-- `filesystem.ro` / `filesystem.rw` are lists of paths (`~` and `$VAR` expanded,
-  existence-gated with `-try` by default).
+- `filesystem.ro` / `filesystem.rw` are lists of paths (`~` and `$VAR`
+  expanded, gated on env-var presence and passed with `-try` by default so
+  missing paths are skipped).
 - `sockets`: named host sockets (`wayland`, `x11`, `pulse`, `pipewire`). The
   `x11` socket binds the host X session (used only by `x11-dangerous`, weak by
   design). For X11 apps, prefer the `x11` / `x11-rootful` modules, which run a
@@ -63,12 +64,13 @@ modules:
   be granted (`wayland` needs `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`): on a
   session without them the bind is skipped, and `--status` reports it under
   `Sockets granted`.
-- `devices`: device names under `/dev` (e.g. `dri`, `kvm`). A device whose
+- `devices`: device names under `/dev` (e.g. `dri`, `kvm`); `video` grants
+  every existing `/dev/videoN` camera node. A device whose
   node is missing on the host is not granted for that run (`--status` reports
   granted devices).
 - `extends`: list of base modules to inherit binds from (pulled in first, deduped,
   cycle-protected).
-- `incompatible`: list of modules that cannot be active together; composition
+- `incompatible`: list of modules that cannot be active together. Composition
   fails with an error if two incompatible modules end up in the effective set.
 - `claims` / `shares`: keys of resources the module holds exclusively or
   shares with other modules. Composition fails when one key has several
@@ -101,11 +103,11 @@ Map a binary to a module list under `apps:`:
 apps:
   mytool:
     modules: [node, webdev, network, mytool]
-    color: 208          # optional; defaults to engine color (39, bright cyan)
+    color: 208          # optional, defaults to engine color (39, bright cyan)
     allow_home: true    # default: false
     setenv:             # optional, same forms as module setenv (strongest layer)
       MYTOOL_CONFIG: /etc/mytool.conf
-    compose_env:        # compose-time value pool; never reaches the sandbox alone
+    compose_env:        # compose-time value pool that never reaches the sandbox alone
       MYTOOL_DIR: ~/.config/mytool
 ```
 
@@ -154,8 +156,9 @@ Declared values support the same expansion as filesystem paths: `~`, `$VAR`,
 and `${VAR}` resolve at compose time against the host env plus the app's
 `compose_env` values. A value referencing an unset `$VAR` is dropped (the
 variable is not passed at all). Non-string YAML scalars (`FOO: 1`,
-`FOO: true`) are coerced to strings, and an actually-empty value requires
-`FOO: ""` (plain `FOO:` forwards the host value instead).
+`FOO: true`) are coerced to strings. `FOO: ""` exports the variable as an
+empty string, while plain `FOO:` forwards whatever the host has (and passes
+nothing when it is unset or empty there).
 
 When the same name is declared in several places, the strongest wins:
 core < modules in effective order (later wins) < app. A declaration always
@@ -189,8 +192,9 @@ sievebox --device=kvm emulator  # /dev/kvm only, no android_emul bundle
 Each grant becomes a synthetic module (`__socket_x11`, `__device_kvm`) that
 flows through the same composition, validation, and incompatibility rules as
 profile modules, and shows up under that name in `--status`. The `__` name
-prefix is reserved for these entries and rejected in profiles. When a grant
-would repeat over many runs, give it a real module instead.
+prefix is reserved for these entries and rejected in profiles. A grant that
+cannot be honored (missing session vars, missing host node) prints a warning.
+When a grant would repeat over many runs, give it a real module instead.
 
 ### Host policy knobs
 
@@ -205,7 +209,7 @@ Per-app in the YAML:
 Both are a security risk if mishandled. The shipped profiles don't enable D-Bus.
 A proxy that mediates access is the common practice if you need it (sievebox
 may grow support for this later on). Because of `--clearenv`, envs like `XAUTHORITY`
-aren't forwarded by default; instead, the `x11-dangerous` module forwards it explicitly.
+aren't forwarded by default, and the `x11-dangerous` module forwards it explicitly.
 Display support is Wayland-first (the `gui` module). X11-only apps use the
 `x11` module: a private X server inside the sandbox, rootless via
 xwayland-satellite when available and rootful Xwayland otherwise, so the host

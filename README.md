@@ -153,7 +153,7 @@ only recognized **before** the binary name.
 - `--discover <binary>`: run the app under `strace` to find missing path
   permissions (see below). Needs `strace`.
 - `-p, --prompt`: when a tool's optional bind directory is missing, offer to
-  create it (also via `SIEVEBOX_PROMPT=true`). Default is to skip.
+  create it (also via `SIEVEBOX_PROMPT=true`, `1` or `yes`). Default is to skip.
 - `--relax=<measure1,measure2,...>`: relax a list of comma-separated security measures. Accepted values:
   - `bwrap`: no namespace isolation, plain exec. As of today, bubblewrap is the
     only security tool used so if disabled, the app runs directly on the host
@@ -179,11 +179,13 @@ only recognized **before** the binary name.
   comma-separated, without a profile module. Same effect as a module whose
   `sockets:` lists them, including setenv forwarding and conflict checks
   (e.g. `--socket=x11` cannot combine with the `x11`/`x11-rootful` modules).
-  Valid sockets: `wayland`, `x11`, `pulse`, `pipewire`.
+  Valid sockets: `wayland`, `x11`, `pulse`, `pipewire`. A grant that cannot
+  be honored (missing session vars, missing host node) prints a warning.
   Example: `sievebox --socket=x11 mytool`.
 - `--device=<device1,device2,...>`: grant devices at runtime, comma-separated,
   binding each `/dev/<name>` node into the sandbox. Valid devices: `dri`,
-  `snd`, `video`, `input`, `tty`, `console`, `kvm`.
+  `snd`, `input`, `tty`, `console`, `kvm`. `video` grants every existing
+  `/dev/videoN` camera node.
   Example: `sievebox --device=kvm mytool`.
 - Runtime grants behave exactly like module grants and appear in `--status`
   (see [docs/PROFILES.md](docs/PROFILES.md) for the module-vs-grant guidance).
@@ -210,7 +212,7 @@ app couldn't access into actionable buckets and writes everything to
 
 - `summary.txt`: the human-readable report (also printed at the end).
 - `failures.log`: the raw classified rows (source of truth).
-- `trace.raw`, `probing.log`, `bound_paths.txt`, `tmpfs_paths.txt`, `detect.txt`.
+- `trace.raw`, `probing.log`, `bound_paths.txt`, `tmpfs_paths.txt`.
 
 The summary groups findings by how actionable they are, roughly:
 
@@ -226,12 +228,6 @@ Every path is tagged **`[exists]`** (it's on the host, so a bind can fix it) or
 **`[missing]`** (the app is probing for something not on disk, binding won't
 help). `[exists]` rows are listed first for better usability.
 
-Before tracing, `--discover` also prints a quick **project-detection** heads-up
-(also saved to `detect.txt`): it looks at marker files in the current directory
-(`package.json`, `Cargo.toml`, `pyproject.toml`, …) and warns if the app's
-modules seem to be missing one (e.g. you're in a conda project but the profile
-has no conda module). Disable with `SIEVEBOX_AUTO_DETECT=false`.
-
 ### Tuning knobs
 
 All env-overridable (sensible defaults in `src/sievebox/discovery.py`):
@@ -239,7 +235,9 @@ All env-overridable (sensible defaults in `src/sievebox/discovery.py`):
 - `DISCOVERY_ERRNOS`: which failures count (default `ENOENT EACCES EROFS`).
 - `DISCOVERY_SYS_PATHS`, `DISCOVERY_CACHE_PATTERNS`, `DISCOVERY_DEPS_PATTERNS`:
   the classification rule table (system config / cache / deps).
-- `SIEVEBOX_DETECT_RULES`: the `marker|type|module` table for project detection.
+- `DISCOVERY_FORCE_CULPRITS=1`: always render the "Most likely culprits"
+  section, treating the end of the trace as the crash point. Useful for apps
+  that crash but exit 0 anyway.
 
 ## Shell overrides
 
