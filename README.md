@@ -18,9 +18,8 @@ can't relax it. **Modules** are named, reusable permission bundles (filesystem
 binds, sockets, devices, env vars, raw bwrap directives) that can `extends` each
 other, e.g. `node`, `network`, `conda`. An **app** is a binary mapped to a list
 of modules plus a few per-app knobs, e.g. `npm` -> `[node, network]`. Run an app
-and sievebox composes its modules on top of core and launches it in a fresh
-sandbox with some shiny prompts and indicators that tells you that the sandbox
-is active.
+and sievebox composes its modules on top of core, then launches it in a fresh
+sandbox with some shiny prompts and indicators to signal the active sandbox.
 
 It ships with base profiles for Conda, Node (node, npm, pnpm, npx, yarn, bun),
 Rust, Android development (including Android Virtual Device emulator) and a
