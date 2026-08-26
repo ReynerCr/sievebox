@@ -166,6 +166,36 @@ def module_holdings(module: Module) -> list[tuple[str, str]]:
     return out
 
 
+def compose_warnings(modules: list[Module], env: Mapping[str, str],
+                     sockets_granted: list[str]) -> list[str]:
+    """Situations a run will likely fail from, with an actionable hint."""
+    out: list[str] = []
+    wants_wayland = any("wayland" in m.sockets for m in modules)
+    if wants_wayland and "wayland" not in sockets_granted \
+            and "x11" not in sockets_granted:
+        x11_available = bool(env.get("DISPLAY")) or os.path.exists("/tmp/.X11-unix")
+        if x11_available:
+            out.append(
+                "Wayland session not granted, no display in sandbox. "
+                "Host X is available via --socket=x11 (weak isolation)."
+            )
+    # only runtime grants warn here, profile-declared gating is status's job
+    for m in modules:
+        if not m.name.startswith(GRANT_PREFIX):
+            continue
+        kind, _, value = m.name.removeprefix(GRANT_PREFIX).partition("_")
+        if kind == "socket":
+            if value not in sockets_granted:
+                out.append(
+                    f"--socket={value}: session vars missing, socket not granted.")
+        elif kind == "device":
+            if not any(os.path.exists(n) for n in device_nodes(value)):
+                out.append(
+                    f"--device={value}: not granted, no matching /dev node "
+                    f"exists on the host.")
+    return out
+
+
 def granted_sockets(modules: list[Module], env: Mapping[str, str]) -> list[str]:
     """Sockets granted across modules: union, deduped, env-gated.
 
