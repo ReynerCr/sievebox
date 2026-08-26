@@ -184,8 +184,8 @@ only recognized **before** the binary name.
   Example: `sievebox --socket=x11 mytool`.
 - `--device=<device1,device2,...>`: grant devices at runtime, comma-separated,
   binding each `/dev/<name>` node into the sandbox. Valid devices: `dri`,
-  `snd`, `input`, `tty`, `console`, `kvm`. `video` grants every existing
-  `/dev/videoN` camera node.
+  `snd`, `video` (every existing `/dev/videoN` camera node), `input`, `tty`,
+  `console`, `kvm`.
   Example: `sievebox --device=kvm mytool`.
 - Runtime grants behave exactly like module grants and appear in `--status`
   (see [docs/PROFILES.md](docs/PROFILES.md) for the module-vs-grant guidance).
