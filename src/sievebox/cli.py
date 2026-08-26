@@ -425,7 +425,6 @@ def _cmd_sandboxed(args: ParsedArgs, cfg: Config, comp: Composition,
         rc = discovery_mod.run_discovery(
             cfg, target, bwrap_argv, comp.bwrap_args + remount, (fd,),
             comp.here, home, state_dir,
-            comp.effective_modules,
         )
         os.close(fd)
         return rc

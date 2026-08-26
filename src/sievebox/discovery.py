@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import subprocess
 import sys
+import termios
 from datetime import datetime
 from pathlib import Path
 from shutil import which
@@ -16,45 +18,53 @@ from .bwrap import arity, category, iter_directives
 if TYPE_CHECKING:
     from .config import Config
 
-# --- Classification tables (env-overridable) ---------------------------------
+# --- Classification tables (env-overridable, read at use time) ----------------
 
-ERRNOS = os.environ.get("DISCOVERY_ERRNOS", "ENOENT EACCES EROFS").split()
+def _env_list(name: str, default: str) -> list[str]:
+    return os.environ.get(name, default).split()
 
-SYS_PATHS = os.environ.get(
-    "DISCOVERY_SYS_PATHS",
-    "/etc/localtime /etc/passwd /etc/group /etc/shadow /etc/nsswitch.conf "
-    "/etc/host.conf /etc/hosts /etc/resolv.conf /etc/netsvc.conf "
-    "/etc/ld.so.preload /etc/ld.so.cache /etc/machine-id /etc/os-release "
-    "/etc/lsb-release /etc/timezone /etc/openssl /etc/ssl /etc/pki "
-    "/etc/gtk-2.0 /etc/gtk-3.0 /etc/fonts",
-).split()
 
-CACHE_PATTERNS = os.environ.get(
-    "DISCOVERY_CACHE_PATTERNS",
-    "/.cache/ /var/cache/ /_cacache/ node-compile-cache /.cache-loader/",
-).split()
+def errnos() -> list[str]:
+    return _env_list("DISCOVERY_ERRNOS", "ENOENT EACCES EROFS")
 
-DEPS_PATTERNS = os.environ.get("DISCOVERY_DEPS_PATTERNS", "/node_modules/").split()
 
-# --- Project detection rules --------------------------------------------------
+def sys_paths() -> set[str]:
+    return set(_env_list(
+        "DISCOVERY_SYS_PATHS",
+        "/etc/localtime /etc/passwd /etc/group /etc/shadow /etc/nsswitch.conf "
+        "/etc/host.conf /etc/hosts /etc/resolv.conf /etc/netsvc.conf "
+        "/etc/ld.so.preload /etc/ld.so.cache /etc/machine-id /etc/os-release "
+        "/etc/lsb-release /etc/timezone /etc/openssl /etc/ssl /etc/pki "
+        "/etc/gtk-2.0 /etc/gtk-3.0 /etc/fonts",
+    ))
 
-DETECT_RULES = [
-    r.split("|") for r in os.environ.get(
-        "SIEVEBOX_DETECT_RULES",
-        "\n".join([
-            "package.json|node|node",
-            "Cargo.toml|rust|dev_base",
-            "pyproject.toml|python|conda",
-            "requirements.txt|python|conda",
-            "environment.yml|python|conda",
-            "go.mod|go|",
-            "deno.json|deno|",
-            "tauri.conf.json|tauri|",
-        ]),
-    ).strip().split("\n") if r.strip()
-]
 
-_AUTO_DETECT = os.environ.get("SIEVEBOX_AUTO_DETECT", "true") == "true"
+def cache_patterns() -> list[str]:
+    return _env_list(
+        "DISCOVERY_CACHE_PATTERNS",
+        "/.cache/ /var/cache/ /_cacache/ node-compile-cache /.cache-loader/",
+    )
+
+
+def deps_patterns() -> list[str]:
+    return _env_list("DISCOVERY_DEPS_PATTERNS", "/node_modules/")
+
+# --- Result rows ---------------------------------------------------------------
+
+@dataclasses.dataclass
+class FailureRow:
+    bucket: str
+    count: int
+    last: int
+    path: str
+    exists: str = ""
+
+
+@dataclasses.dataclass
+class ProbingRow:
+    path: str
+    fails: int
+    successes: int
 
 
 # --- Bwrap arg vector parsing ------------------------------------------------
@@ -91,36 +101,6 @@ def extract_tmpfs_paths(bwrap_args: list[str]) -> set[str]:
     return out
 
 
-# --- Project detection --------------------------------------------------------
-
-def project_hints(here: str, effective_deps: list[str]) -> str:
-    """Advisory project-type detection. Returns multi-line string or empty."""
-    if not _AUTO_DETECT:
-        return ""
-    types: list[str] = []
-    gaps: list[str] = []
-    eff_set = set(effective_deps)
-    for rule in DETECT_RULES:
-        marker, ptype = rule[0], rule[1]
-        mod = rule[2] if len(rule) > 2 else ""
-        if not os.path.exists(os.path.join(here, marker)):
-            continue
-        if ptype not in types:
-            types.append(ptype)
-        if mod and mod not in eff_set and mod not in gaps:
-            gaps.append(mod)
-    if not types:
-        return ""
-    lines = [f"[detect] Project in {here} looks like: {' '.join(types)}"]
-    if gaps:
-        lines.append(f"[detect] Active modules ({' '.join(effective_deps)}) may be MISSING: {' '.join(gaps)}")
-        lines.append("[detect] If the app can't find those tools, watch the summary below")
-        lines.append(f"[detect] for related paths (or add the module to the profile).")
-    else:
-        lines.append("[detect] All detected types are covered by active modules.")
-    return "\n".join(lines)
-
-
 # --- Strace trace classifier --------------------------------------------------
 
 _PATH_RE = re.compile(r'"(/[^"]*)"')
@@ -146,7 +126,7 @@ def _get_path(line: str) -> str:
 
 def _is_fail(line: str) -> bool:
     m = _ERR_RE.search(line)
-    return m is not None and m.group(1) in ERRNOS
+    return m is not None and m.group(1) in errnos()
 
 
 def _is_success(line: str) -> bool:
@@ -254,7 +234,7 @@ def _parse_trace(trace_path: str) -> tuple[dict[str, int], dict[str, int], dict[
 def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
                     success: dict[str, int], write_paths: set[str],
                     fatal: int, bound: set[str], tmpfs: set[str],
-                    here: str, path_env: str) -> tuple[list[dict], list[dict]]:
+                    here: str, path_env: str) -> tuple[list[FailureRow], list[ProbingRow]]:
     """Classify each failed path into buckets. Returns (failures, probing)."""
     path_set: set[str] = set()
     for d in path_env.split(":"):
@@ -268,11 +248,11 @@ def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
     bnc: dict[str, int] = {}
     bnc_seen: set[str] = set()
     candidates: dict[str, str] = {}
-    probing: list[dict] = []
+    probing: list[ProbingRow] = []
 
     for p in fail_count:
         if success.get(p, 0) > 0 and p not in write_paths:
-            probing.append({"path": p, "fails": fail_count[p], "successes": success[p]})
+            probing.append(ProbingRow(path=p, fails=fail_count[p], successes=success[p]))
             continue
         if _under(p, bound):
             continue
@@ -282,11 +262,11 @@ def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
             candidates[p] = "WRITE"
         elif _parent(p) in path_set:
             candidates[p] = "PATHL"
-        elif _has_substring(p, DEPS_PATTERNS):
+        elif _has_substring(p, deps_patterns()):
             candidates[p] = "DEPS"
-        elif _has_substring(p, CACHE_PATTERNS):
+        elif _has_substring(p, cache_patterns()):
             candidates[p] = "CACHE"
-        elif _under(p, set(SYS_PATHS)):
+        elif _under(p, sys_paths()):
             candidates[p] = "SYS"
         else:
             candidates[p] = "?"
@@ -299,28 +279,23 @@ def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
                     bnc[key] = bnc.get(key, 0) + 1
 
     # Pass 2: finalize WALK vs APP
-    failures: list[dict] = []
+    failures: list[FailureRow] = []
     for p in candidates:
         b = candidates[p]
         if b == "?":
             par = _parent(p)
             b = "WALK" if (bnc.get(_basename(p), 0) >= 2 and _is_ancestor(par, here)) else "APP"
-        failures.append({
-            "bucket": b,
-            "count": fail_count[p],
-            "last": last_seen[p],
-            "path": p,
-        })
+        failures.append(FailureRow(bucket=b, count=fail_count[p],
+                                   last=last_seen[p], path=p))
 
-    failures.sort(key=lambda r: r["path"])
-    failures.append({"bucket": "META", "count": "fatal", "last": fatal, "path": "-"})
+    failures.sort(key=lambda r: r.path)
+    failures.append(FailureRow(bucket="META", count=0, last=fatal, path="-"))
     return failures, probing
 
 
 def classify(trace_path: str, bound: set[str], tmpfs: set[str],
-             here: str, path_env: str) -> tuple[list[dict], list[dict]]:
-    """Parse strace trace, classify failures into buckets.
-    Returns (failures, probing) lists of dicts."""
+             here: str, path_env: str) -> tuple[list[FailureRow], list[ProbingRow]]:
+    """Parse strace trace, classify failures into buckets."""
     fail_count, last_seen, success, write_paths, fatal = _parse_trace(trace_path)
     return _classify_paths(fail_count, last_seen, success, write_paths,
                            fatal, bound, tmpfs, here, path_env)
@@ -328,51 +303,46 @@ def classify(trace_path: str, bound: set[str], tmpfs: set[str],
 
 # --- Mark exists --------------------------------------------------------------
 
-def mark_exists(failures: list[dict]) -> None:
+def mark_exists(failures: list[FailureRow]) -> None:
     """Annotate each row with 'E' (exists on host) or 'M' (missing). In-place."""
     for row in failures:
-        if row["bucket"] == "META":
-            row["exists"] = ""
+        if row.bucket == "META":
+            row.exists = ""
         else:
-            row["exists"] = "E" if os.path.exists(row["path"]) else "M"
+            row.exists = "E" if os.path.exists(row.path) else "M"
 
 
 # --- Summary builder ----------------------------------------------------------
 
-def build_summary(failures: list[dict], probing: list[dict],
-                  detect_text: str, target_bin: str) -> str:
+def build_summary(failures: list[FailureRow], probing: list[ProbingRow],
+                  target_bin: str) -> str:
     """Build the categorized, actionability-ordered summary."""
     fatal = 0
     for r in failures:
-        if r["bucket"] == "META" and r["count"] == "fatal":
-            fatal = r["last"]
+        if r.bucket == "META":
+            fatal = r.last
             break
 
     lines = [
-        f"# Discovery summary for '{target_bin}'  (errnos: {'/'.join(ERRNOS)})",
+        f"# Discovery summary for '{target_bin}'  (errnos: {'/'.join(errnos())})",
         "# [exists]=on host, a real bind candidate;  [missing]=app probe, not on disk",
         "# count  tag  path    -> failures.log is the raw source of truth",
     ]
-
-    if detect_text.strip():
-        lines.append("")
-        lines.append("== Project detection ==")
-        lines.append(detect_text.rstrip())
 
     # Most likely culprits for a crash
     if fatal > 0:
         culprits = [
             r for r in failures
-            if r["bucket"] in ("WRITE", "APP", "WALK") and r["last"] <= fatal
+            if r.bucket in ("WRITE", "APP", "WALK") and r.last <= fatal
         ]
-        culprits.sort(key=lambda r: r["last"], reverse=True)
+        culprits.sort(key=lambda r: r.last, reverse=True)
         culprits = culprits[:15]
         if culprits:
             lines.append("")
             lines.append("== Most likely culprits for a crash (just before exit) ==")
             for r in culprits:
-                lab = "[exists]" if r["exists"] == "E" else "[missing]"
-                lines.append(f"{r['count']:6d}  {lab:<9s} {r['path']}")
+                lab = "[exists]" if r.exists == "E" else "[missing]"
+                lines.append(f"{r.count:6d}  {lab:<9s} {r.path}")
 
     # Actionable buckets
     _section(lines, failures, "WRITE", "App tried to CREATE/WRITE here (wants rw --bind)", 50)
@@ -390,7 +360,7 @@ def build_summary(failures: list[dict], probing: list[dict],
         lines.append("== Probing (failed then later succeeded -> ignored) ==")
         lines.append(f"  {len(probing)} path(s); see probing.log")
 
-    real_failures = [r for r in failures if r["bucket"] != "META"]
+    real_failures = [r for r in failures if r.bucket != "META"]
     if not real_failures:
         lines.append("")
         lines.append("(no missing-permission candidates found)")
@@ -398,18 +368,18 @@ def build_summary(failures: list[dict], probing: list[dict],
     return "\n".join(lines)
 
 
-def _section(lines: list[str], failures: list[dict],
+def _section(lines: list[str], failures: list[FailureRow],
              tag: str, title: str, cap: int) -> None:
-    rows = [r for r in failures if r["bucket"] == tag]
+    rows = [r for r in failures if r.bucket == tag]
     total = len(rows)
     if total == 0:
         return
-    rows.sort(key=lambda r: (0 if r["exists"] == "E" else 1, r["path"]))
+    rows.sort(key=lambda r: (0 if r.exists == "E" else 1, r.path))
     lines.append("")
     lines.append(f"== {title}  ({total}) ==")
     for r in rows[:cap]:
-        lab = "[exists]" if r["exists"] == "E" else "[missing]"
-        lines.append(f"{r['count']:6d}  {lab:<9s} {r['path']}")
+        lab = "[exists]" if r.exists == "E" else "[missing]"
+        lines.append(f"{r.count:6d}  {lab:<9s} {r.path}")
     if total > cap:
         lines.append(f"  ... (+{total - cap} more; see failures.log)")
 
@@ -418,8 +388,7 @@ def _section(lines: list[str], failures: list[dict],
 
 def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
                   bwrap_flat: list[str], pass_fds: tuple[int, ...],
-                  here: str, home: str, state_dir: str,
-                  effective_deps: list[str]) -> int:
+                  here: str, home: str, state_dir: str) -> int:
     """Run strace+bwrap via fd-based argv, classify from flat args, summarize. Returns exit code."""
     if not which("strace"):
         print("Error: --discover requires 'strace' (not found on PATH).", file=sys.stderr)
@@ -431,7 +400,7 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     try:
         os.chmod(Path(state_dir), 0o700)
     except OSError:
-        pass
+        pass  # state dir owned by someone else: keep going, discovery still works
 
     trace = run_dir / "trace.raw"
     failures_path = run_dir / "failures.log"
@@ -439,7 +408,6 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     summary_path = run_dir / "summary.txt"
     bound_path = run_dir / "bound_paths.txt"
     tmpfs_path = run_dir / "tmpfs_paths.txt"
-    detect_path = run_dir / "detect.txt"
 
     bound = extract_bound_paths(bwrap_flat)
     tmpfs = extract_tmpfs_paths(bwrap_flat)
@@ -447,13 +415,20 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     tmpfs_path.write_text("\n".join(sorted(tmpfs)) + "\n" if tmpfs else "")
 
     print()
-    detect_text = project_hints(here, effective_deps)
-    detect_path.write_text(detect_text + "\n" if detect_text else "")
-    if detect_text:
-        print(detect_text)
     print(f"[discovery] Tracing '{target}'. Use it normally, then exit to analyze.")
     print(f"[discovery] Artifacts: {run_dir}")
     print()
+
+    # Interactive children (bash readline) disable tty echo while reading;
+    # if they die mid-read the parent shell inherits a broken terminal.
+    # Save and restore our side's attributes around the traced run.
+    tty_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+    saved_attrs = None
+    if tty_fd is not None:
+        try:
+            saved_attrs = termios.tcgetattr(tty_fd)
+        except termios.error:
+            pass
 
     interrupted = False
     try:
@@ -461,6 +436,12 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     except KeyboardInterrupt:
         interrupted = True
         rc = 130
+    finally:
+        if saved_attrs is not None:
+            try:
+                termios.tcsetattr(tty_fd, termios.TCSANOW, saved_attrs)
+            except termios.error:
+                pass
 
     failures, probing = classify(str(trace), bound, tmpfs, here, os.environ.get("PATH", ""))
     mark_exists(failures)
@@ -468,12 +449,12 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     _write_failures(failures, failures_path)
     _write_probing(probing, probing_path)
 
-    summary = build_summary(failures, probing, detect_text, target)
+    summary = build_summary(failures, probing, target)
     summary_path.write_text(summary + "\n")
 
     print()
     if interrupted:
-        print(f"[discovery] Interrupted; partial trace analyzed.")
+        print("[discovery] Interrupted; partial trace analyzed.")
     elif rc != 0:
         print(f"[discovery] '{target}' exited with code {rc}.")
     else:
@@ -500,16 +481,16 @@ def _run_strace(trace_path: Path, bwrap_argv: list[str],
     return proc.returncode
 
 
-def _write_failures(failures: list[dict], path: Path) -> None:
+def _write_failures(failures: list[FailureRow], path: Path) -> None:
     lines = []
     for r in failures:
-        if r["bucket"] == "META":
-            lines.append(f"META\t{r['count']}\t{r['last']}\t{r['path']}")
+        if r.bucket == "META":
+            lines.append(f"META\tfatal\t{r.last}\t{r.path}")
         else:
-            lines.append(f"{r['bucket']}\t{r['count']}\t{r['last']}\t{r['path']}\t{r['exists']}")
+            lines.append(f"{r.bucket}\t{r.count}\t{r.last}\t{r.path}\t{r.exists}")
     path.write_text("\n".join(lines) + "\n" if lines else "")
 
 
-def _write_probing(probing: list[dict], path: Path) -> None:
-    lines = [f"{r['path']}\t{r['fails']}\t{r['successes']}" for r in probing]
+def _write_probing(probing: list[ProbingRow], path: Path) -> None:
+    lines = [f"{r.path}\t{r.fails}\t{r.successes}" for r in probing]
     path.write_text("\n".join(lines) + "\n" if lines else "")
