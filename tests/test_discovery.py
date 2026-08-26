@@ -54,6 +54,31 @@ def test_classification_matches_goldens():
     assert s + "\n" == (D / "expected_summary.txt").read_text()
 
 
+def test_summary_force_culprits(tmp_path, monkeypatch):
+    # a trace with failures but NO crash record: culprits only render when
+    # forced, treating end-of-trace as the crash point
+    trace = tmp_path / "trace.raw"
+    trace.write_text(
+        '123  openat(AT_FDCWD, "/home/user/missing.conf", O_RDONLY) = -1 ENOENT (No such file or directory)\n'
+        '456  openat(AT_FDCWD, "/home/user/data.json", O_WRONLY|O_CREAT|O_TRUNC, 0666) = -1 EACCES (Permission denied)\n'
+    )
+
+    def summarize() -> str:
+        f, p = discovery.classify(str(trace), set(), set(),
+                                  "/home/user/project", "/usr/bin:/bin")
+        discovery.mark_exists(f)
+        return discovery.build_summary(f, p, "bash")
+
+    monkeypatch.delenv("DISCOVERY_FORCE_CULPRITS", raising=False)
+    assert "Most likely culprits" not in summarize()
+
+    monkeypatch.setenv("DISCOVERY_FORCE_CULPRITS", "1")
+    summary = summarize()
+    assert "Most likely culprits for a crash" in summary
+    assert "/home/user/data.json" in summary  # last failure sorts first
+    assert "/home/user/missing.conf" in summary
+
+
 # --- Interrupt / error handling -----------------------------------------------
 
 def _run_discovery(tmp_path, monkeypatch, strace_fn):
