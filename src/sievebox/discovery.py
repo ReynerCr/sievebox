@@ -16,46 +16,36 @@ from .bwrap import arity, category, iter_directives
 if TYPE_CHECKING:
     from .config import Config
 
-# --- Classification tables (env-overridable) ---------------------------------
+# --- Classification tables (env-overridable, read at use time) ----------------
 
-ERRNOS = os.environ.get("DISCOVERY_ERRNOS", "ENOENT EACCES EROFS").split()
+def _env_list(name: str, default: str) -> list[str]:
+    return os.environ.get(name, default).split()
 
-SYS_PATHS = os.environ.get(
-    "DISCOVERY_SYS_PATHS",
-    "/etc/localtime /etc/passwd /etc/group /etc/shadow /etc/nsswitch.conf "
-    "/etc/host.conf /etc/hosts /etc/resolv.conf /etc/netsvc.conf "
-    "/etc/ld.so.preload /etc/ld.so.cache /etc/machine-id /etc/os-release "
-    "/etc/lsb-release /etc/timezone /etc/openssl /etc/ssl /etc/pki "
-    "/etc/gtk-2.0 /etc/gtk-3.0 /etc/fonts",
-).split()
 
-CACHE_PATTERNS = os.environ.get(
-    "DISCOVERY_CACHE_PATTERNS",
-    "/.cache/ /var/cache/ /_cacache/ node-compile-cache /.cache-loader/",
-).split()
+def errnos() -> list[str]:
+    return _env_list("DISCOVERY_ERRNOS", "ENOENT EACCES EROFS")
 
-DEPS_PATTERNS = os.environ.get("DISCOVERY_DEPS_PATTERNS", "/node_modules/").split()
 
-# --- Project detection rules --------------------------------------------------
+def sys_paths() -> set[str]:
+    return set(_env_list(
+        "DISCOVERY_SYS_PATHS",
+        "/etc/localtime /etc/passwd /etc/group /etc/shadow /etc/nsswitch.conf "
+        "/etc/host.conf /etc/hosts /etc/resolv.conf /etc/netsvc.conf "
+        "/etc/ld.so.preload /etc/ld.so.cache /etc/machine-id /etc/os-release "
+        "/etc/lsb-release /etc/timezone /etc/openssl /etc/ssl /etc/pki "
+        "/etc/gtk-2.0 /etc/gtk-3.0 /etc/fonts",
+    ))
 
-DETECT_RULES = [
-    r.split("|") for r in os.environ.get(
-        "SIEVEBOX_DETECT_RULES",
-        "\n".join([
-            "package.json|node|node",
-            "Cargo.toml|rust|dev_base",
-            "pyproject.toml|python|conda",
-            "requirements.txt|python|conda",
-            "environment.yml|python|conda",
-            "go.mod|go|",
-            "deno.json|deno|",
-            "tauri.conf.json|tauri|",
-        ]),
-    ).strip().split("\n") if r.strip()
-]
 
-_AUTO_DETECT = os.environ.get("SIEVEBOX_AUTO_DETECT", "true") == "true"
+def cache_patterns() -> list[str]:
+    return _env_list(
+        "DISCOVERY_CACHE_PATTERNS",
+        "/.cache/ /var/cache/ /_cacache/ node-compile-cache /.cache-loader/",
+    )
 
+
+def deps_patterns() -> list[str]:
+    return _env_list("DISCOVERY_DEPS_PATTERNS", "/node_modules/")
 
 # --- Bwrap arg vector parsing ------------------------------------------------
 
@@ -91,36 +81,6 @@ def extract_tmpfs_paths(bwrap_args: list[str]) -> set[str]:
     return out
 
 
-# --- Project detection --------------------------------------------------------
-
-def project_hints(here: str, effective_deps: list[str]) -> str:
-    """Advisory project-type detection. Returns multi-line string or empty."""
-    if not _AUTO_DETECT:
-        return ""
-    types: list[str] = []
-    gaps: list[str] = []
-    eff_set = set(effective_deps)
-    for rule in DETECT_RULES:
-        marker, ptype = rule[0], rule[1]
-        mod = rule[2] if len(rule) > 2 else ""
-        if not os.path.exists(os.path.join(here, marker)):
-            continue
-        if ptype not in types:
-            types.append(ptype)
-        if mod and mod not in eff_set and mod not in gaps:
-            gaps.append(mod)
-    if not types:
-        return ""
-    lines = [f"[detect] Project in {here} looks like: {' '.join(types)}"]
-    if gaps:
-        lines.append(f"[detect] Active modules ({' '.join(effective_deps)}) may be MISSING: {' '.join(gaps)}")
-        lines.append("[detect] If the app can't find those tools, watch the summary below")
-        lines.append(f"[detect] for related paths (or add the module to the profile).")
-    else:
-        lines.append("[detect] All detected types are covered by active modules.")
-    return "\n".join(lines)
-
-
 # --- Strace trace classifier --------------------------------------------------
 
 _PATH_RE = re.compile(r'"(/[^"]*)"')
@@ -146,7 +106,7 @@ def _get_path(line: str) -> str:
 
 def _is_fail(line: str) -> bool:
     m = _ERR_RE.search(line)
-    return m is not None and m.group(1) in ERRNOS
+    return m is not None and m.group(1) in errnos()
 
 
 def _is_success(line: str) -> bool:
@@ -282,11 +242,11 @@ def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
             candidates[p] = "WRITE"
         elif _parent(p) in path_set:
             candidates[p] = "PATHL"
-        elif _has_substring(p, DEPS_PATTERNS):
+        elif _has_substring(p, deps_patterns()):
             candidates[p] = "DEPS"
-        elif _has_substring(p, CACHE_PATTERNS):
+        elif _has_substring(p, cache_patterns()):
             candidates[p] = "CACHE"
-        elif _under(p, set(SYS_PATHS)):
+        elif _under(p, sys_paths()):
             candidates[p] = "SYS"
         else:
             candidates[p] = "?"
@@ -340,7 +300,7 @@ def mark_exists(failures: list[dict]) -> None:
 # --- Summary builder ----------------------------------------------------------
 
 def build_summary(failures: list[dict], probing: list[dict],
-                  detect_text: str, target_bin: str) -> str:
+                  target_bin: str) -> str:
     """Build the categorized, actionability-ordered summary."""
     fatal = 0
     for r in failures:
@@ -349,15 +309,10 @@ def build_summary(failures: list[dict], probing: list[dict],
             break
 
     lines = [
-        f"# Discovery summary for '{target_bin}'  (errnos: {'/'.join(ERRNOS)})",
+        f"# Discovery summary for '{target_bin}'  (errnos: {'/'.join(errnos())})",
         "# [exists]=on host, a real bind candidate;  [missing]=app probe, not on disk",
         "# count  tag  path    -> failures.log is the raw source of truth",
     ]
-
-    if detect_text.strip():
-        lines.append("")
-        lines.append("== Project detection ==")
-        lines.append(detect_text.rstrip())
 
     # Most likely culprits for a crash
     if fatal > 0:
@@ -418,8 +373,7 @@ def _section(lines: list[str], failures: list[dict],
 
 def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
                   bwrap_flat: list[str], pass_fds: tuple[int, ...],
-                  here: str, home: str, state_dir: str,
-                  effective_deps: list[str]) -> int:
+                  here: str, home: str, state_dir: str) -> int:
     """Run strace+bwrap via fd-based argv, classify from flat args, summarize. Returns exit code."""
     if not which("strace"):
         print("Error: --discover requires 'strace' (not found on PATH).", file=sys.stderr)
@@ -439,7 +393,6 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     summary_path = run_dir / "summary.txt"
     bound_path = run_dir / "bound_paths.txt"
     tmpfs_path = run_dir / "tmpfs_paths.txt"
-    detect_path = run_dir / "detect.txt"
 
     bound = extract_bound_paths(bwrap_flat)
     tmpfs = extract_tmpfs_paths(bwrap_flat)
@@ -447,10 +400,6 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     tmpfs_path.write_text("\n".join(sorted(tmpfs)) + "\n" if tmpfs else "")
 
     print()
-    detect_text = project_hints(here, effective_deps)
-    detect_path.write_text(detect_text + "\n" if detect_text else "")
-    if detect_text:
-        print(detect_text)
     print(f"[discovery] Tracing '{target}'. Use it normally, then exit to analyze.")
     print(f"[discovery] Artifacts: {run_dir}")
     print()
@@ -468,7 +417,7 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     _write_failures(failures, failures_path)
     _write_probing(probing, probing_path)
 
-    summary = build_summary(failures, probing, detect_text, target)
+    summary = build_summary(failures, probing, target)
     summary_path.write_text(summary + "\n")
 
     print()

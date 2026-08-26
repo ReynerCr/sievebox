@@ -690,7 +690,7 @@ def test_wayland_warning_fires_when_x_available(tmp_path, monkeypatch):
     # DISPLAY unset but /tmp/.X11-unix present is still an X-capable host
     real_exists = os.path.exists
     monkeypatch.setattr(
-        "sievebox.compose.os.path.exists",
+        "sievebox.capabilities.os.path.exists",
         lambda p: True if p == "/tmp/.X11-unix" else real_exists(p),
     )
     comp = _compose_gui(tmp_path, {})
@@ -720,7 +720,7 @@ def test_runtime_grant_gating_warnings(tmp_path, monkeypatch):
     cfg.modules["__socket_wayland"] = Module(name="__socket_wayland",
                                              sockets=["wayland"])
     real_exists2 = os.path.exists
-    monkeypatch.setattr("sievebox.compose.os.path.exists",
+    monkeypatch.setattr("sievebox.capabilities.os.path.exists",
                         lambda p: False if p == "/tmp/.X11-unix" else real_exists2(p))
     comp = compose(cfg, "app", here="/tmp", home="/home/user", env={},
                    inject_modules=["__device_kvm", "__socket_wayland"])
@@ -744,7 +744,7 @@ def test_no_wayland_warnings(tmp_path, monkeypatch):
         "XDG_RUNTIME_DIR": "/run/user/1000", "WAYLAND_DISPLAY": "wayland-0"})
     assert comp.warnings == []
     # headless host: warning would be noise on top of an expected failure
-    monkeypatch.setattr("sievebox.compose.os.path.exists", no_x11_dir)
+    monkeypatch.setattr("sievebox.capabilities.os.path.exists", no_x11_dir)
     comp = _compose_gui(tmp_path, {})
     assert comp.warnings == []
     # no wayland-claiming module in play, even with X available

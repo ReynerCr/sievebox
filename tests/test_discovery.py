@@ -22,10 +22,10 @@ BOUND = set(BOUND_FILE.read_text().strip().split("\n"))
 TMPFS = set(TMPFS_FILE.read_text().strip().split("\n"))
 
 
-def _run_pipeline(detect_text: str = ""):
+def _run_pipeline():
     f, p = discovery.classify(str(TRACE), BOUND, TMPFS, HERE, PATH_ENV)
     discovery.mark_exists(f)
-    summary = discovery.build_summary(f, p, detect_text, TARGET)
+    summary = discovery.build_summary(f, p, TARGET)
     return f, p, summary
 
 
@@ -64,7 +64,6 @@ def _run_discovery(tmp_path, monkeypatch, strace_fn):
     rc = discovery.run_discovery(
         Config(paths=[]), "node", ["--args", "3"], [], (),
         "/home/user/project", "/home/user", str(state),
-        ["simple_module"],
     )
     run_dir = next((state / "discovery").iterdir())
     return rc, run_dir
@@ -102,16 +101,3 @@ def test_run_strace_returns_child_exit_code(tmp_path, monkeypatch):
 
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 42))
     assert discovery._run_strace(tmp_path / "trace.raw", [], ()) == 42
-
-
-# --- Project detection (needs real filesystem) --------------------------------
-
-def test_project_detection(tmp_path):
-    (tmp_path / "package.json").write_text("{}")
-
-    with_gap = discovery.project_hints(str(tmp_path), ["simple_module"])
-    assert "looks like: node" in with_gap
-    assert "may be MISSING: node" in with_gap
-
-    covered = discovery.project_hints(str(tmp_path), ["node", "webdev"])
-    assert "All detected types are covered" in covered
