@@ -49,6 +49,12 @@ def cache_patterns() -> list[str]:
 def deps_patterns() -> list[str]:
     return _env_list("DISCOVERY_DEPS_PATTERNS", "/node_modules/")
 
+
+def force_culprits() -> bool:
+    """Treat end-of-trace as the crash point so culprits always render,
+    covering apps that exit 0 despite crashing."""
+    return os.environ.get("DISCOVERY_FORCE_CULPRITS", "") in ("1", "true", "yes")
+
 # --- Result rows ---------------------------------------------------------------
 
 @dataclasses.dataclass
@@ -228,6 +234,10 @@ def _parse_trace(trace_path: str) -> tuple[dict[str, int], dict[str, int], dict[
             elif _is_success(line):
                 success[p] = success.get(p, 0) + 1
 
+    if not fatal and force_culprits():
+        # no explicit crash record (app exited 0, or strace died first):
+        # the end of the trace is the best crash-point estimate
+        fatal = tnr
     return fail_count, last_seen, success, write_paths, fatal
 
 
