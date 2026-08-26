@@ -29,20 +29,20 @@ def _run_pipeline():
     return f, p, summary
 
 
-def _format_failures(f: list[dict]) -> str:
+def _format_failures(f: list[discovery.FailureRow]) -> str:
     lines = []
     for r in f:
-        if r["bucket"] == "META":
-            lines.append(f"META\t{r['count']}\t{r['last']}\t{r['path']}")
+        if r.bucket == "META":
+            lines.append(f"META\tfatal\t{r.last}\t{r.path}")
         else:
-            lines.append(f"{r['bucket']}\t{r['count']}\t{r['last']}\t{r['path']}\t{r['exists']}")
+            lines.append(f"{r.bucket}\t{r.count}\t{r.last}\t{r.path}\t{r.exists}")
     return "\n".join(lines) + "\n"
 
 
-def _format_probing(p: list[dict]) -> str:
+def _format_probing(p: list[discovery.ProbingRow]) -> str:
     if not p:
         return ""
-    return "\n".join(f"{r['path']}\t{r['fails']}\t{r['successes']}" for r in p) + "\n"
+    return "\n".join(f"{r.path}\t{r.fails}\t{r.successes}" for r in p) + "\n"
 
 
 # --- Golden file tests --------------------------------------------------------

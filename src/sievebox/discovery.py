@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import subprocess
@@ -47,6 +48,24 @@ def cache_patterns() -> list[str]:
 
 def deps_patterns() -> list[str]:
     return _env_list("DISCOVERY_DEPS_PATTERNS", "/node_modules/")
+
+# --- Result rows ---------------------------------------------------------------
+
+@dataclasses.dataclass
+class FailureRow:
+    bucket: str
+    count: int
+    last: int
+    path: str
+    exists: str = ""
+
+
+@dataclasses.dataclass
+class ProbingRow:
+    path: str
+    fails: int
+    successes: int
+
 
 # --- Bwrap arg vector parsing ------------------------------------------------
 
@@ -215,7 +234,7 @@ def _parse_trace(trace_path: str) -> tuple[dict[str, int], dict[str, int], dict[
 def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
                     success: dict[str, int], write_paths: set[str],
                     fatal: int, bound: set[str], tmpfs: set[str],
-                    here: str, path_env: str) -> tuple[list[dict], list[dict]]:
+                    here: str, path_env: str) -> tuple[list[FailureRow], list[ProbingRow]]:
     """Classify each failed path into buckets. Returns (failures, probing)."""
     path_set: set[str] = set()
     for d in path_env.split(":"):
@@ -229,11 +248,11 @@ def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
     bnc: dict[str, int] = {}
     bnc_seen: set[str] = set()
     candidates: dict[str, str] = {}
-    probing: list[dict] = []
+    probing: list[ProbingRow] = []
 
     for p in fail_count:
         if success.get(p, 0) > 0 and p not in write_paths:
-            probing.append({"path": p, "fails": fail_count[p], "successes": success[p]})
+            probing.append(ProbingRow(path=p, fails=fail_count[p], successes=success[p]))
             continue
         if _under(p, bound):
             continue
@@ -260,28 +279,23 @@ def _classify_paths(fail_count: dict[str, int], last_seen: dict[str, int],
                     bnc[key] = bnc.get(key, 0) + 1
 
     # Pass 2: finalize WALK vs APP
-    failures: list[dict] = []
+    failures: list[FailureRow] = []
     for p in candidates:
         b = candidates[p]
         if b == "?":
             par = _parent(p)
             b = "WALK" if (bnc.get(_basename(p), 0) >= 2 and _is_ancestor(par, here)) else "APP"
-        failures.append({
-            "bucket": b,
-            "count": fail_count[p],
-            "last": last_seen[p],
-            "path": p,
-        })
+        failures.append(FailureRow(bucket=b, count=fail_count[p],
+                                   last=last_seen[p], path=p))
 
-    failures.sort(key=lambda r: r["path"])
-    failures.append({"bucket": "META", "count": "fatal", "last": fatal, "path": "-"})
+    failures.sort(key=lambda r: r.path)
+    failures.append(FailureRow(bucket="META", count=0, last=fatal, path="-"))
     return failures, probing
 
 
 def classify(trace_path: str, bound: set[str], tmpfs: set[str],
-             here: str, path_env: str) -> tuple[list[dict], list[dict]]:
-    """Parse strace trace, classify failures into buckets.
-    Returns (failures, probing) lists of dicts."""
+             here: str, path_env: str) -> tuple[list[FailureRow], list[ProbingRow]]:
+    """Parse strace trace, classify failures into buckets."""
     fail_count, last_seen, success, write_paths, fatal = _parse_trace(trace_path)
     return _classify_paths(fail_count, last_seen, success, write_paths,
                            fatal, bound, tmpfs, here, path_env)
@@ -289,24 +303,24 @@ def classify(trace_path: str, bound: set[str], tmpfs: set[str],
 
 # --- Mark exists --------------------------------------------------------------
 
-def mark_exists(failures: list[dict]) -> None:
+def mark_exists(failures: list[FailureRow]) -> None:
     """Annotate each row with 'E' (exists on host) or 'M' (missing). In-place."""
     for row in failures:
-        if row["bucket"] == "META":
-            row["exists"] = ""
+        if row.bucket == "META":
+            row.exists = ""
         else:
-            row["exists"] = "E" if os.path.exists(row["path"]) else "M"
+            row.exists = "E" if os.path.exists(row.path) else "M"
 
 
 # --- Summary builder ----------------------------------------------------------
 
-def build_summary(failures: list[dict], probing: list[dict],
+def build_summary(failures: list[FailureRow], probing: list[ProbingRow],
                   target_bin: str) -> str:
     """Build the categorized, actionability-ordered summary."""
     fatal = 0
     for r in failures:
-        if r["bucket"] == "META" and r["count"] == "fatal":
-            fatal = r["last"]
+        if r.bucket == "META":
+            fatal = r.last
             break
 
     lines = [
@@ -319,16 +333,16 @@ def build_summary(failures: list[dict], probing: list[dict],
     if fatal > 0:
         culprits = [
             r for r in failures
-            if r["bucket"] in ("WRITE", "APP", "WALK") and r["last"] <= fatal
+            if r.bucket in ("WRITE", "APP", "WALK") and r.last <= fatal
         ]
-        culprits.sort(key=lambda r: r["last"], reverse=True)
+        culprits.sort(key=lambda r: r.last, reverse=True)
         culprits = culprits[:15]
         if culprits:
             lines.append("")
             lines.append("== Most likely culprits for a crash (just before exit) ==")
             for r in culprits:
-                lab = "[exists]" if r["exists"] == "E" else "[missing]"
-                lines.append(f"{r['count']:6d}  {lab:<9s} {r['path']}")
+                lab = "[exists]" if r.exists == "E" else "[missing]"
+                lines.append(f"{r.count:6d}  {lab:<9s} {r.path}")
 
     # Actionable buckets
     _section(lines, failures, "WRITE", "App tried to CREATE/WRITE here (wants rw --bind)", 50)
@@ -346,7 +360,7 @@ def build_summary(failures: list[dict], probing: list[dict],
         lines.append("== Probing (failed then later succeeded -> ignored) ==")
         lines.append(f"  {len(probing)} path(s); see probing.log")
 
-    real_failures = [r for r in failures if r["bucket"] != "META"]
+    real_failures = [r for r in failures if r.bucket != "META"]
     if not real_failures:
         lines.append("")
         lines.append("(no missing-permission candidates found)")
@@ -354,18 +368,18 @@ def build_summary(failures: list[dict], probing: list[dict],
     return "\n".join(lines)
 
 
-def _section(lines: list[str], failures: list[dict],
+def _section(lines: list[str], failures: list[FailureRow],
              tag: str, title: str, cap: int) -> None:
-    rows = [r for r in failures if r["bucket"] == tag]
+    rows = [r for r in failures if r.bucket == tag]
     total = len(rows)
     if total == 0:
         return
-    rows.sort(key=lambda r: (0 if r["exists"] == "E" else 1, r["path"]))
+    rows.sort(key=lambda r: (0 if r.exists == "E" else 1, r.path))
     lines.append("")
     lines.append(f"== {title}  ({total}) ==")
     for r in rows[:cap]:
-        lab = "[exists]" if r["exists"] == "E" else "[missing]"
-        lines.append(f"{r['count']:6d}  {lab:<9s} {r['path']}")
+        lab = "[exists]" if r.exists == "E" else "[missing]"
+        lines.append(f"{r.count:6d}  {lab:<9s} {r.path}")
     if total > cap:
         lines.append(f"  ... (+{total - cap} more; see failures.log)")
 
@@ -467,16 +481,16 @@ def _run_strace(trace_path: Path, bwrap_argv: list[str],
     return proc.returncode
 
 
-def _write_failures(failures: list[dict], path: Path) -> None:
+def _write_failures(failures: list[FailureRow], path: Path) -> None:
     lines = []
     for r in failures:
-        if r["bucket"] == "META":
-            lines.append(f"META\t{r['count']}\t{r['last']}\t{r['path']}")
+        if r.bucket == "META":
+            lines.append(f"META\tfatal\t{r.last}\t{r.path}")
         else:
-            lines.append(f"{r['bucket']}\t{r['count']}\t{r['last']}\t{r['path']}\t{r['exists']}")
+            lines.append(f"{r.bucket}\t{r.count}\t{r.last}\t{r.path}\t{r.exists}")
     path.write_text("\n".join(lines) + "\n" if lines else "")
 
 
-def _write_probing(probing: list[dict], path: Path) -> None:
-    lines = [f"{r['path']}\t{r['fails']}\t{r['successes']}" for r in probing]
+def _write_probing(probing: list[ProbingRow], path: Path) -> None:
+    lines = [f"{r.path}\t{r.fails}\t{r.successes}" for r in probing]
     path.write_text("\n".join(lines) + "\n" if lines else "")
