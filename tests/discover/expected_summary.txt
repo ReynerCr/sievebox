@@ -1,5 +1,5 @@
 # Discovery summary for 'node'  (errnos: ENOENT/EACCES/EROFS)
-# [exists]=on host, a real bind candidate;  [missing]=app probe, not on disk
+# [exists]=on host, a real bind candidate. [missing]=app probe, not on disk
 # count  tag  path    -> failures.log is the raw source of truth
 
 == Most likely culprits for a crash (just before exit) ==
@@ -24,7 +24,7 @@
      1  [missing] /home/user/project/node_modules/express/index.js
      1  [missing] /home/user/project/node_modules/react/index.js
 
-== Ephemeral sandbox tmpfs (regenerated; do NOT bind)  (1) ==
+== Ephemeral sandbox tmpfs (regenerated. Do NOT bind)  (1) ==
      1  [missing] /tmp/node-compile-cache/abc
 
 == System/libc config (usually optional)  (3) ==
@@ -33,4 +33,4 @@
      1  [exists]  /etc/passwd
 
 == Probing (failed then later succeeded -> ignored) ==
-  2 path(s); see probing.log
+  2 path(s). See probing.log

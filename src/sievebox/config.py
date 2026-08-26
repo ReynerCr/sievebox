@@ -130,7 +130,7 @@ def find_config_files(script_dir: Path | None = None) -> list[Path]:
         if env_cfg:
             looked.append(env_cfg)
         raise ConfigError(
-            "no sievebox profile configuration found; looked for:\n  "
+            "no sievebox profile configuration found. Looked for:\n  "
             + "\n  ".join(str(c) for c in looked)
             + "\nSet SIEVEBOX_CONFIG=<file> to override."
         )
@@ -282,7 +282,7 @@ def _normalize_app_keys(raw: dict, path: Path) -> tuple[dict, dict]:
 
     Returns (exact, globs). Comma keys like "npm, pnpm" produce individual
     entries with identical specs. Keys containing glob chars (*?[]) go into
-    globs; the rest go into exact. Duplicate names within the same file (via
+    globs, the rest go into exact. Duplicate names within the same file (via
     comma expansion or duplicate keys) are an error. Expansion happens per-file
     before merging, so drop-ins can override individual expanded entries.
     """

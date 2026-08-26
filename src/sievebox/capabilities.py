@@ -19,7 +19,7 @@ KNOWN_DEVICES: set[str] = {"dri", "snd", "video", "input", "tty", "console", "kv
 # Name prefix reserved for runtime-grant modules.
 GRANT_PREFIX = "__"
 
-# socket name -> (mode, path template); each path gates on its own $VARs.
+# socket name -> (mode, path template). Each path gates on its own $VARs.
 # WAYLAND_DISPLAY is special: the protocol allows an absolute socket path,
 # in which case it is used directly instead of under $XDG_RUNTIME_DIR.
 _SOCKET_BINDS: dict[str, list[tuple[str, str]]] = {
@@ -91,7 +91,7 @@ def _bind(mode: str, path: str) -> list[str]:
 def socket_binds(sock: str, env: Mapping[str, str] | None = None) -> list[tuple[str, str]]:
     """Resolve a socket's bind templates against `env` (default: host env).
 
-    Returns (mode, path) pairs whose $VAR references all resolved; templates
+    Returns (mode, path) pairs whose $VAR references all resolved. Templates
     gated out by an unset var are skipped. A socket with no surviving binds
     did not resolve in this environment.
     """
@@ -113,7 +113,7 @@ def module_bwrap_args(module: Module, env: Mapping[str, str] | None = None) -> l
 
     `env` selects the environment socket binds resolve against (default:
     host env). Filesystem and device binds always use the host env.
-    Identical binds within one module are emitted once; overlaps across
+    Identical binds within one module are emitted once. Overlaps across
     modules stay as declared.
     """
     args: list[str] = []
@@ -211,7 +211,7 @@ def granted_sockets(modules: list[Module], env: Mapping[str, str]) -> list[str]:
 
 
 def device_nodes(name: str) -> list[str]:
-    """Host nodes a device name refers to; `video` expands to all cameras."""
+    """Host nodes a device name refers to. `video` expands to all cameras."""
     if name == "video":
         return sorted(glob.glob("/dev/video[0-9]*"))
     return [f"/dev/{name}"]
