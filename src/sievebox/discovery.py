@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import termios
 from datetime import datetime
 from pathlib import Path
 from shutil import which
@@ -404,12 +405,29 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     print(f"[discovery] Artifacts: {run_dir}")
     print()
 
+    # Interactive children (bash readline) disable tty echo while reading;
+    # if they die mid-read the parent shell inherits a broken terminal.
+    # Save and restore our side's attributes around the traced run.
+    tty_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+    saved_attrs = None
+    if tty_fd is not None:
+        try:
+            saved_attrs = termios.tcgetattr(tty_fd)
+        except termios.error:
+            pass
+
     interrupted = False
     try:
         rc = _run_strace(trace, bwrap_argv, pass_fds)
     except KeyboardInterrupt:
         interrupted = True
         rc = 130
+    finally:
+        if saved_attrs is not None:
+            try:
+                termios.tcsetattr(tty_fd, termios.TCSANOW, saved_attrs)
+            except termios.error:
+                pass
 
     failures, probing = classify(str(trace), bound, tmpfs, here, os.environ.get("PATH", ""))
     mark_exists(failures)
