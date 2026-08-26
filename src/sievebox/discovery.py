@@ -400,7 +400,7 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     try:
         os.chmod(Path(state_dir), 0o700)
     except OSError:
-        pass
+        pass  # state dir owned by someone else: keep going, discovery still works
 
     trace = run_dir / "trace.raw"
     failures_path = run_dir / "failures.log"
@@ -454,7 +454,7 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
 
     print()
     if interrupted:
-        print(f"[discovery] Interrupted; partial trace analyzed.")
+        print("[discovery] Interrupted; partial trace analyzed.")
     elif rc != 0:
         print(f"[discovery] '{target}' exited with code {rc}.")
     else:
