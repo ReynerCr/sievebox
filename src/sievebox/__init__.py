@@ -1,1 +1,1 @@
-"""sievebox — data-driven bwrap sandbox engine (Python port)."""
+"""sievebox: data-driven bwrap sandbox engine (Python port)."""

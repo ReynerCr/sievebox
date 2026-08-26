@@ -335,7 +335,7 @@ def build_summary(failures: list[FailureRow], probing: list[ProbingRow],
 
     lines = [
         f"# Discovery summary for '{target_bin}'  (errnos: {'/'.join(errnos())})",
-        "# [exists]=on host, a real bind candidate;  [missing]=app probe, not on disk",
+        "# [exists]=on host, a real bind candidate. [missing]=app probe, not on disk",
         "# count  tag  path    -> failures.log is the raw source of truth",
     ]
 
@@ -361,14 +361,14 @@ def build_summary(failures: list[FailureRow], probing: list[ProbingRow],
     # Well-understood buckets
     _section(lines, failures, "DEPS", "node_modules lookups (missing package? not installed)", 15)
     _section(lines, failures, "CACHE", "Regenerable cache dirs (safe to ignore)", 12)
-    _section(lines, failures, "EPHEM", "Ephemeral sandbox tmpfs (regenerated; do NOT bind)", 12)
+    _section(lines, failures, "EPHEM", "Ephemeral sandbox tmpfs (regenerated. Do NOT bind)", 12)
     _section(lines, failures, "SYS", "System/libc config (usually optional)", 15)
     _section(lines, failures, "PATHL", "PATH binary lookups (almost always harmless)", 12)
 
     if probing:
         lines.append("")
         lines.append("== Probing (failed then later succeeded -> ignored) ==")
-        lines.append(f"  {len(probing)} path(s); see probing.log")
+        lines.append(f"  {len(probing)} path(s). See probing.log")
 
     real_failures = [r for r in failures if r.bucket != "META"]
     if not real_failures:
@@ -391,7 +391,7 @@ def _section(lines: list[str], failures: list[FailureRow],
         lab = "[exists]" if r.exists == "E" else "[missing]"
         lines.append(f"{r.count:6d}  {lab:<9s} {r.path}")
     if total > cap:
-        lines.append(f"  ... (+{total - cap} more; see failures.log)")
+        lines.append(f"  ... (+{total - cap} more. See failures.log)")
 
 
 # --- Orchestration ------------------------------------------------------------
@@ -429,8 +429,8 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
     print(f"[discovery] Artifacts: {run_dir}")
     print()
 
-    # Interactive children (bash readline) disable tty echo while reading;
-    # if they die mid-read the parent shell inherits a broken terminal.
+    # Interactive children (bash readline) disable tty echo while reading.
+    # If they die mid-read, the parent shell inherits a broken terminal.
     # Save and restore our side's attributes around the traced run.
     tty_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
     saved_attrs = None
@@ -464,7 +464,7 @@ def run_discovery(cfg: Config, target: str, bwrap_argv: list[str],
 
     print()
     if interrupted:
-        print("[discovery] Interrupted; partial trace analyzed.")
+        print("[discovery] Interrupted. Partial trace analyzed.")
     elif rc != 0:
         print(f"[discovery] '{target}' exited with code {rc}.")
     else:
