@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 
 from . import capabilities
-from .bwrap import FS_DIRECTIVE_FLAGS, VIRTUAL_FS_FLAGS
+from .bwrap import FS_DIRECTIVE_FLAGS, VIRTUAL_FS_FLAGS, category, iter_directives
 from .config import Config, ConfigError, DEFAULT_COLOR, find_app, flatten_modules
 
 
@@ -121,9 +121,10 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     # resolution, devices on /dev node existence. A module naming something
     # the host cannot provide did not grant it.
     eff_mods = [cfg.modules[n] for n in eff]
+    flat_raw = [t for mod in eff_mods for d in mod.raw_args for t in d]
     network = any(
-        "--share-net" in d
-        for mod in eff_mods for d in mod.raw_args
+        category(flag) == "network"
+        for flag, _ in iter_directives(flat_raw)
     )
     sockets_granted = capabilities.granted_sockets(eff_mods, env)
     devices_granted = capabilities.granted_devices(eff_mods)
