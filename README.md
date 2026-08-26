@@ -195,7 +195,7 @@ only recognized **before** the binary name.
 
 Profiles are loaded from a base file plus drop-ins and merged at runtime.
 Adding your own modules, routing apps, merge semantics, env forwarding, and
-host policy knobs are covered in
+host policy knobs (`allow_home`, network access) are covered in
 [`docs/PROFILES.md`](docs/PROFILES.md).
 
 ## Discovering missing permissions (`--discover`)
