@@ -48,38 +48,6 @@ class Composition:
     setenv: list[str] = field(default_factory=list)  # resolved names, precedence order
 
 
-def _compose_warnings(eff: list[str], cfg: Config, env: dict,
-                      sockets_granted: list[str]) -> list[str]:
-    """Situations a run will likely fail from, with an actionable hint."""
-    out: list[str] = []
-    wants_wayland = any(
-        "wayland" in cfg.modules[n].sockets for n in eff
-    )
-    if wants_wayland and "wayland" not in sockets_granted \
-            and "x11" not in sockets_granted:
-        x11_available = bool(env.get("DISPLAY")) or os.path.exists("/tmp/.X11-unix")
-        if x11_available:
-            out.append(
-                "Wayland session not granted, no display in sandbox. "
-                "Host X is available via --socket=x11 (weak isolation)."
-            )
-    # only runtime grants warn here, profile-declared gating is status's job
-    for name in eff:
-        if not name.startswith(capabilities.GRANT_PREFIX):
-            continue
-        kind, _, value = name.removeprefix(capabilities.GRANT_PREFIX).partition("_")
-        if kind == "socket":
-            if value not in sockets_granted:
-                out.append(
-                    f"--socket={value}: session vars missing, socket not granted.")
-        elif kind == "device":
-            if not any(os.path.exists(n) for n in capabilities.device_nodes(value)):
-                out.append(
-                    f"--device={value}: not granted, no matching /dev node "
-                    f"exists on the host.")
-    return out
-
-
 def compose(cfg: Config, app_name: str, *, here: str, home: str,
             env: dict | None = None, relaxed: set[str] | None = None,
             inject_modules: list[str] | None = None) -> Composition:
@@ -159,7 +127,7 @@ def compose(cfg: Config, app_name: str, *, here: str, home: str,
     )
     sockets_granted = capabilities.granted_sockets(eff_mods, env)
     devices_granted = capabilities.granted_devices(eff_mods)
-    warns = _compose_warnings(eff, cfg, env, sockets_granted)
+    warns = capabilities.compose_warnings(eff_mods, env, sockets_granted)
 
     for name, value in setenv_entries.items():
         if value is None:
