@@ -59,7 +59,7 @@ _BIND_FLAG = {"ro": "--ro-bind-try", "rw": "--bind-try"}
 def expand_value(value: str, env: Mapping[str, str] | None = None) -> str | None:
     """Expand ~ and $VARs. Return None if any referenced var is unset/empty.
 
-    `env` defaults to the host environment; compose passes the merged env
+    `env` defaults to the host environment. Compose passes the merged env
     (os.environ + app-provided values) when expanding env var values. When
     `env` is given, both $VARs and ~ resolve against it exclusively.
     """
@@ -143,7 +143,7 @@ def module_holdings(module: Module) -> list[tuple[str, str]]:
     """(mode, key) holdings a module carries over capability keys, deduped
     in order: implied by its sockets first, then explicit `claims`
     (exclusive), then explicit `shares` (shared). A module can hold one
-    mode per key; the stronger wins."""
+    mode per key. The stronger wins."""
     out: list[tuple[str, str]] = []
 
     def add(mode: str, key: str) -> None:
@@ -237,7 +237,7 @@ def granted_devices(modules: list[Module]) -> list[str]:
 def module_setenv(module: Module) -> dict[str, str | None]:
     """Env entries a module forwards (declared + socket-derived), deduped.
 
-    Socket-derived names are bare (forward host value); the module's own
+    Socket-derived names are bare (forward host value). The module's own
     declarations win over them for the same name.
     """
     out: dict[str, str | None] = {}

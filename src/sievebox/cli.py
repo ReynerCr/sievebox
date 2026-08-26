@@ -97,7 +97,7 @@ def _warn(msg: str) -> None:
 
 
 def _set_mode(args: ParsedArgs, new: str) -> int | None:
-    """Set the invocation mode; exit code when two modes collide."""
+    """Set the invocation mode. Return the collision exit code if any."""
     if args.mode != "run" and args.mode != new:
         _err(f"--{args.mode} and --{new} are mutually exclusive")
         return EXIT_USAGE
@@ -391,7 +391,7 @@ def _cmd_sandboxed(args: ParsedArgs, cfg: Config, comp: Composition,
         _warn(f"'{target}' not found on PATH, execution may fail.")
     _emit_warnings(comp)
     if args.mode in ("run", "discover") and not bwrap_off and not shutil.which("bwrap"):
-        _err("bubblewrap ('bwrap') not found on PATH; install it to run sandboxes.")
+        _err("bubblewrap ('bwrap') not found on PATH. Install it to run sandboxes.")
         return EXIT_ERROR
 
     if bwrap_off:

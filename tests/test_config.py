@@ -484,7 +484,7 @@ def _compose_setenv(tmp_path, *, core=None, module=None, app=None, env=None):
 
 
 def test_setenv_precedence_chain(tmp_path):
-    # weakest to strongest: core < module < app; declared literals cross in
+    # weakest to strongest: core < module < app. Declared literals cross in
     got = _compose_setenv(tmp_path, core={"F": "core"}, module={"F": "module"})
     assert got["F"] == "module"
     got = _compose_setenv(
@@ -524,7 +524,7 @@ def test_setenv_declarations_beat_host_env(tmp_path):
 
 
 def test_setenv_empty_string_is_emitted(tmp_path):
-    # a declared "" exports an empty variable, shell-faithful; an unset-var
+    # a declared "" exports an empty variable, shell-faithful. An unset-var
     # declaration still gates out entirely
     got = _compose_setenv(
         tmp_path, module={"EMPTY": "", "DROPPED": "$TOTALLY_UNSET/x"}, env={})
@@ -660,7 +660,7 @@ def test_introspection_vars_gating(tmp_path):
         "apps": {"app": {"modules": ["m"]}},
     })
     cfg = load_config([base])
-    # bare env: wayland gates out; device gating mirrors the host check
+    # bare env: wayland gates out. Device gating mirrors the host check
     comp = compose(cfg, "app", here="/tmp", home="/home/user", env={})
     assert _setenv_value(comp.bwrap_args, "SIEVEBOX_MODULES") == "m"
     assert _setenv_value(comp.bwrap_args, "SIEVEBOX_SOCKETS") == ""
