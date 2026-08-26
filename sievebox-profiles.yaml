@@ -6,16 +6,15 @@
 #     setenv      env vars to forward into the sandbox: bare names forward the
 #                 host value, a mapping declares values (~ and $VAR expanded)
 #     shell_init  raw bash run inside the sandbox at launch
-#     filesystem  ro / rw path lists; ~ and $VAR expanded, existence-gated,
-#                 entries with an unset $VAR are skipped
-#     sockets     named host sockets: wayland, pulse, pipewire
-#     devices     device names under /dev (e.g. dri)
+#     filesystem  ro / rw path lists; ~ and $VAR expanded, gated on env-var
+#                 presence, entries with an unset $VAR are skipped
+#     sockets     named host sockets: wayland, x11, pulse, pipewire
+#     devices     device names under /dev (e.g. dri); video grants all cameras
 #     raw_args    raw bwrap directives (token lists); {bin} -> target binary,
 #                 ~ -> $HOME. Appended after core args in module order.
-#   apps: binary -> { modules, root, color, allow_home, compose_env, setenv }
-#     color       256-color code for the sandbox prompt (optional; defaults to 39)
+#   apps: binary -> { modules, color, allow_home, compose_env, setenv }
+#     color       256-color code for the sandbox prompt (optional, defaults to 39)
 #     allow_home default false   (permit running directly in $HOME)
-#     root       module driving the prompt color (default: first module)
 #     compose_env  compose-time value pool: expansion source for $VARs in
 #                setenv values and fallback for bare names, never passed in
 #     setenv     same forms as module setenv (strongest precedence layer)
@@ -25,7 +24,7 @@
 
 # Base sandbox applied to every app, in order. Each `args` entry is a bwrap
 # directive (token list); {bin} -> target binary, ~ -> $HOME.
-# ADVANCED: this is the security floor; edit with care.
+# ADVANCED: this is the security floor, edit with care.
 core:
   args:
     - [--unshare-all]
@@ -161,8 +160,8 @@ modules:
         - /etc/vulkan
         - ~/.local/share/vulkan
 
-  # Conda module: shows one use case of the shell_init attribute;
-  # preserves the conda default PS1 override while also auto activating an
+  # Conda module: shows one use case of the shell_init attribute.
+  # Preserves the conda default PS1 override while also auto activating an
   # environment according to the presence of an env variable (CONDA_ENV).
   conda:
     setenv: [CONDA_ENV]
